@@ -1,5 +1,11 @@
 #include "Engine.hpp"
 
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
+#include <cmath>
+#include <iostream>
+#include <VkBootstrap.h>
+
 Engine::Engine()
 {
     init();
@@ -7,8 +13,360 @@ Engine::Engine()
 
 Engine::~Engine()
 {
+    vkDeviceWaitIdle(m_device);
+
+    for (int i = 0; i < 2; i++) {
+        vkDestroyCommandPool(m_device, frameData[i].commandPool, nullptr);
+
+        vkDestroyFence(m_device, frameData[i].renderFence, nullptr);
+        vkDestroySemaphore(m_device, frameData[i].renderSemaphore, nullptr);
+        vkDestroySemaphore(m_device, frameData[i].swapchainSemaphore, nullptr);
+    }
+
+	destroySwapchain();
+
+	vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+	vkDestroyDevice(m_device, nullptr);
+		
+	vkb::destroy_debug_utils_messenger(m_instance, m_debugMessenger);
+	vkDestroyInstance(m_instance, nullptr);
+	SDL_DestroyWindow(m_pWindow);
 }
 
+
 void Engine::init(){
+    initSDL3();
     
+    initVulkan();
+    
+    initSwapchain();
+    
+    initCommands();
+    
+    initSynchronization();    
+}
+
+void Engine::initSDL3(){
+    SDL_InitFlags SdlInitFlags = 0;
+    SdlInitFlags |= SDL_INIT_VIDEO;
+    
+    SDL_WindowFlags SdlWindowFlags = 0;
+    SdlWindowFlags |= SDL_WINDOW_VULKAN;
+    
+    SDL_Init(SdlInitFlags);
+    m_pWindow = SDL_CreateWindow("TEST", 1600, 900, SdlWindowFlags);
+}
+
+void Engine::initVulkan(){
+    vkb::InstanceBuilder instanceBuilder;
+
+    vkb::SystemInfo sysInfo = vkb::SystemInfo::get_system_info().value();
+
+    if (sysInfo.validation_layers_available && m_bUseValidation) {
+        instanceBuilder.request_validation_layers();
+    }
+    if (sysInfo.debug_utils_available && m_bUseDebugMessenger) {
+        instanceBuilder.use_default_debug_messenger();
+    }
+    instanceBuilder.require_api_version(1, 3, 0);
+
+    vkb::Result<vkb::Instance> instanceBuilderRet = instanceBuilder.build();
+    if (!instanceBuilderRet) {
+        throw std::runtime_error(instanceBuilderRet.error().message() + "\n");
+    }
+    vkb::Instance vkbInstance = instanceBuilderRet.value();
+    m_instance = vkbInstance.instance;
+
+    if(vkbInstance.debug_messenger && m_bUseDebugMessenger){
+        m_debugMessenger = vkbInstance.debug_messenger;
+    }       
+
+    
+    if(!SDL_Vulkan_CreateSurface(m_pWindow, m_instance, nullptr, &m_surface)){
+       const char* err = SDL_GetError();
+       std::cout << err << std::endl;
+    }
+
+	VkPhysicalDeviceVulkan13Features features13{ 
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES
+    };
+	features13.dynamicRendering = true;
+	features13.synchronization2 = true;
+
+	VkPhysicalDeviceVulkan12Features features12{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+    };
+	features12.bufferDeviceAddress = true;
+
+    vkb::PhysicalDeviceSelector vkbSelector{ vkbInstance };
+	vkb::PhysicalDevice physicalDevice = vkbSelector
+		.set_minimum_version(1, 3)
+		.set_required_features_13(features13)
+		.set_required_features_12(features12)
+		.set_surface(m_surface)
+		.select()
+		.value();
+    
+    vkb::DeviceBuilder vkbBuilder { physicalDevice };
+    vkb::Device vkbDevice = vkbBuilder.build().value();
+
+    m_physicalDevice = physicalDevice.physical_device;
+    m_device = vkbDevice.device;
+
+    m_graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+    m_graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+}
+
+void Engine::initCommands(){
+    VkCommandPoolCreateInfo commandPoolInfo =  {};
+	commandPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+	commandPoolInfo.pNext = nullptr;
+	commandPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+	commandPoolInfo.queueFamilyIndex = m_graphicsQueueFamily;
+	
+	for (int i = 0; i < 2; i++) {
+
+		vkCreateCommandPool(m_device, &commandPoolInfo, nullptr, &frameData[i].commandPool);
+
+		// allocate the default command buffer that we will use for rendering
+		VkCommandBufferAllocateInfo cmdAllocInfo = {};
+		cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		cmdAllocInfo.pNext = nullptr;
+		cmdAllocInfo.commandPool = frameData[i].commandPool;
+		cmdAllocInfo.commandBufferCount = 1;
+		cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+		vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &frameData[i].commandBuffer);
+	}
+}
+
+void Engine::initSwapchain(){
+    createSwapchain(1600, 900);
+}
+
+void Engine::initSynchronization(){
+    VkFenceCreateInfo fenceInfo = {};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.pNext = nullptr;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    VkSemaphoreCreateInfo semInfo = {};
+    semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    semInfo.pNext = nullptr;
+
+    
+	for (int i = 0; i < 2; i++) {
+		vkCreateFence(m_device, &fenceInfo, nullptr, &frameData[i].renderFence);
+
+		vkCreateSemaphore(m_device, &semInfo, nullptr, &frameData[i].swapchainSemaphore);
+		vkCreateSemaphore(m_device, &semInfo, nullptr, &frameData[i].renderSemaphore);
+	}
+}
+
+
+void Engine::createSwapchain(uint32_t width, uint32_t height){
+    vkb::SwapchainBuilder swapchainBuilder{ m_physicalDevice, m_device, m_surface };
+
+	m_swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
+
+	vkb::Swapchain vkbSwapchain = swapchainBuilder
+		.set_desired_format(
+            VkSurfaceFormatKHR{ .format = m_swapchainImageFormat, 
+                .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR 
+            })
+		.set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
+		.set_desired_extent(width, height)
+		.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+		.build()
+		.value();
+
+	m_swapchainExtent = vkbSwapchain.extent;
+	m_swapchain = vkbSwapchain.swapchain;
+	m_swapchainImages = vkbSwapchain.get_images().value();
+	m_swapchainImageViews = vkbSwapchain.get_image_views().value();
+}
+
+void Engine::destroySwapchain(){
+	vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+	
+    for (uint32_t i = 0; i < m_swapchainImageViews.size(); i++) {
+		vkDestroyImageView(m_device, m_swapchainImageViews[i], nullptr);
+	}
+}
+
+
+void Engine::draw(){
+    vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, true, 1000000000);
+    vkResetFences(m_device, 1, &getCurrentFrame().renderFence);
+
+	uint32_t swapchainImageIndex;
+	VkResult acquireResult = vkAcquireNextImageKHR(m_device, m_swapchain, 1000000000, getCurrentFrame().swapchainSemaphore, VK_NULL_HANDLE, &swapchainImageIndex);
+	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+		//resize_swapchain();
+		return;
+	}
+	else if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
+		throw std::runtime_error("failed to acqurie swapchain image!");
+	}
+
+    VkCommandBuffer cmd = getCurrentFrame().commandBuffer;
+    vkResetCommandBuffer(cmd, 0);
+
+    VkCommandBufferBeginInfo commandBufferBeginInfo = {};
+    commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    commandBufferBeginInfo.pNext = nullptr;
+    commandBufferBeginInfo.pInheritanceInfo = nullptr;
+    commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
+
+
+    	//make the swapchain image into writeable mode before rendering
+	transitionImage(cmd, m_swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+	//make a clear-color from frame number. This will flash with a 120 frame period.
+	VkClearColorValue clearValue;
+	float flash = std::abs(std::sin(m_frameNumber / 120.f));
+	clearValue = { { 0.0f, 0.0f, flash, 1.0f } };
+
+
+    VkImageSubresourceRange subImage {};
+    subImage.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    subImage.baseMipLevel = 0;
+    subImage.levelCount = VK_REMAINING_MIP_LEVELS;
+    subImage.baseArrayLayer = 0;
+    subImage.layerCount = VK_REMAINING_ARRAY_LAYERS;
+	VkImageSubresourceRange clearRange = subImage;
+
+	//clear image
+	vkCmdClearColorImage(cmd, m_swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
+
+	//make the swapchain image into presentable mode
+	transitionImage(cmd, m_swapchainImages[swapchainImageIndex],VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+	//finalize the command buffer (we can no longer add commands, but it can now be executed)
+	vkEndCommandBuffer(cmd);
+
+    VkCommandBufferSubmitInfo commandBufferSubmitInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        .pNext = nullptr,
+        .commandBuffer = cmd,
+        .deviceMask = 0
+    };
+    VkSemaphoreSubmitInfo semaphoreWaitSubmitInfo{ 
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .semaphore = getCurrentFrame().swapchainSemaphore,
+        .value = 1,
+        .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
+        .deviceIndex = 0
+    };
+	VkSemaphoreSubmitInfo semaphoreSignalSubmitInfo{ 
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .semaphore = getCurrentFrame().renderSemaphore,
+        .value = 1,
+        .stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
+        .deviceIndex = 0
+    };
+    VkSubmitInfo2 queueSubmitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .pNext = nullptr,
+        .flags = 0,
+        .waitSemaphoreInfoCount = 1,
+        .pWaitSemaphoreInfos = &semaphoreWaitSubmitInfo,
+        .commandBufferInfoCount = 1,
+        .pCommandBufferInfos = &commandBufferSubmitInfo,
+        .signalSemaphoreInfoCount = 1,
+        .pSignalSemaphoreInfos = &semaphoreSignalSubmitInfo
+    };
+
+    vkQueueSubmit2(m_graphicsQueue, 1, &queueSubmitInfo, getCurrentFrame().renderFence);
+    
+
+    VkPresentInfoKHR presentInfo = {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &getCurrentFrame().renderSemaphore,
+        .swapchainCount = 1,
+        .pSwapchains = &m_swapchain,
+        .pImageIndices = &swapchainImageIndex
+    };
+
+	vkQueuePresentKHR(m_graphicsQueue, &presentInfo);
+
+	//increase the number of frames drawn
+	m_frameNumber++;
+}
+
+void Engine::transitionImage(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout)
+{
+    VkImageMemoryBarrier2 imageBarrier {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    imageBarrier.pNext = nullptr;
+
+    imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    imageBarrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    imageBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+
+    imageBarrier.oldLayout = currentLayout;
+    imageBarrier.newLayout = newLayout;
+
+    VkImageAspectFlags aspectMask = (newLayout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+    
+    VkImageSubresourceRange subImage {};
+    subImage.aspectMask = aspectMask;
+    subImage.baseMipLevel = 0;
+    subImage.levelCount = VK_REMAINING_MIP_LEVELS;
+    subImage.baseArrayLayer = 0;
+    subImage.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    imageBarrier.subresourceRange = subImage;
+    imageBarrier.image = image;
+
+    VkDependencyInfo depInfo {};
+    depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    depInfo.pNext = nullptr;
+
+    depInfo.imageMemoryBarrierCount = 1;
+    depInfo.pImageMemoryBarriers = &imageBarrier;
+
+    vkCmdPipelineBarrier2(cmd, &depInfo);
+}
+
+
+
+void Engine::run(){
+    SDL_Event e;
+    bool quit = false;
+    while(!quit){
+
+        while(SDL_PollEvent(&e) != 0){
+            switch (e.type)
+            {
+            case SDL_EVENT_QUIT:
+                quit = true;
+                break;
+            case SDL_EVENT_WINDOW_MINIMIZED:
+                //stopRendering =true
+                break;
+            case SDL_EVENT_WINDOW_MAXIMIZED:
+                //stopRendering = false;
+                break;
+            case SDL_EVENT_KEY_DOWN:
+                std::cout << "Pressed Key: " << SDL_GetKeyName(e.key.key) << std::endl;
+            default:
+                break;
+            }
+        }
+
+        //stopRendering
+            //continue
+        
+        //future imgui stuff
+        //ImplVulkanNewFrame, ImpleSDL3NewFrame
+        
+        draw();
+    }
 }

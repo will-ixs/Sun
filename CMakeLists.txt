@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(VulkanProject LANGUAGES C CXX)
 
 # Set C++ Standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Vulkan
@@ -97,6 +97,7 @@ FetchContent_MakeAvailable(imgui)
 # Create Executable
 add_executable(VulkanProject 
     src/main.cpp
+    src/Engine.cpp
 )
 
 # Include Directories
