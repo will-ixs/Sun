@@ -2,9 +2,15 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <VkBootstrap.h>
+
+#define VMA_IMPLEMENTATION
+#include <vma/vk_mem_alloc.h>
+
 #include <cmath>
 #include <iostream>
-#include <VkBootstrap.h>
+
+#include "Swapchain.hpp"
 
 Engine::Engine()
 {
@@ -23,7 +29,9 @@ Engine::~Engine()
         vkDestroySemaphore(m_device, frameData[i].swapchainSemaphore, nullptr);
     }
 
-	destroySwapchain();
+    vmaDestroyAllocator(m_allocator);
+
+    m_swapchain->destroySwapchain();
 
 	vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
 	vkDestroyDevice(m_device, nullptr);
@@ -54,7 +62,7 @@ void Engine::initSDL3(){
     SdlWindowFlags |= SDL_WINDOW_VULKAN;
     
     SDL_Init(SdlInitFlags);
-    m_pWindow = SDL_CreateWindow("TEST", 1600, 900, SdlWindowFlags);
+    m_pWindow = SDL_CreateWindow("Engine", 1600, 900, SdlWindowFlags);
 }
 
 void Engine::initVulkan(){
@@ -88,15 +96,16 @@ void Engine::initVulkan(){
     }
 
 	VkPhysicalDeviceVulkan13Features features13{ 
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .synchronization2 = true,
+        .dynamicRendering = true
     };
-	features13.dynamicRendering = true;
-	features13.synchronization2 = true;
 
 	VkPhysicalDeviceVulkan12Features features12{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .bufferDeviceAddress = true//,
+        //.descriptorIndexing = true;
     };
-	features12.bufferDeviceAddress = true;
 
     vkb::PhysicalDeviceSelector vkbSelector{ vkbInstance };
 	vkb::PhysicalDevice physicalDevice = vkbSelector
@@ -115,45 +124,57 @@ void Engine::initVulkan(){
 
     m_graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
     m_graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+
+    VmaAllocatorCreateInfo allocatorInfo = {
+        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = m_physicalDevice,
+        .device = m_device,
+        .instance = m_instance
+    };
+    vmaCreateAllocator(&allocatorInfo, &m_allocator);
 }
 
 void Engine::initCommands(){
-    VkCommandPoolCreateInfo commandPoolInfo =  {};
-	commandPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-	commandPoolInfo.pNext = nullptr;
-	commandPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-	commandPoolInfo.queueFamilyIndex = m_graphicsQueueFamily;
+
+    VkCommandPoolCreateInfo commandPoolInfo =  {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr, 
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = m_graphicsQueueFamily
+    };
 	
 	for (int i = 0; i < 2; i++) {
 
 		vkCreateCommandPool(m_device, &commandPoolInfo, nullptr, &frameData[i].commandPool);
 
-		// allocate the default command buffer that we will use for rendering
-		VkCommandBufferAllocateInfo cmdAllocInfo = {};
-		cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		cmdAllocInfo.pNext = nullptr;
-		cmdAllocInfo.commandPool = frameData[i].commandPool;
-		cmdAllocInfo.commandBufferCount = 1;
-		cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		VkCommandBufferAllocateInfo cmdAllocInfo = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .commandPool = frameData[i].commandPool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1
+        };
 
 		vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &frameData[i].commandBuffer);
 	}
 }
 
 void Engine::initSwapchain(){
-    createSwapchain(1600, 900);
+    m_swapchain = std::make_unique<Swapchain>(m_device, m_physicalDevice, m_surface);
+    m_swapchain->createSwapchain(1600, 900);
 }
 
 void Engine::initSynchronization(){
-    VkFenceCreateInfo fenceInfo = {};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.pNext = nullptr;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    VkFenceCreateInfo fenceInfo = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT
+    };
 
-    VkSemaphoreCreateInfo semInfo = {};
-    semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    semInfo.pNext = nullptr;
-
+    VkSemaphoreCreateInfo semInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = nullptr,
+    };
     
 	for (int i = 0; i < 2; i++) {
 		vkCreateFence(m_device, &fenceInfo, nullptr, &frameData[i].renderFence);
@@ -163,44 +184,12 @@ void Engine::initSynchronization(){
 	}
 }
 
-
-void Engine::createSwapchain(uint32_t width, uint32_t height){
-    vkb::SwapchainBuilder swapchainBuilder{ m_physicalDevice, m_device, m_surface };
-
-	m_swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
-
-	vkb::Swapchain vkbSwapchain = swapchainBuilder
-		.set_desired_format(
-            VkSurfaceFormatKHR{ .format = m_swapchainImageFormat, 
-                .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR 
-            })
-		.set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
-		.set_desired_extent(width, height)
-		.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-		.build()
-		.value();
-
-	m_swapchainExtent = vkbSwapchain.extent;
-	m_swapchain = vkbSwapchain.swapchain;
-	m_swapchainImages = vkbSwapchain.get_images().value();
-	m_swapchainImageViews = vkbSwapchain.get_image_views().value();
-}
-
-void Engine::destroySwapchain(){
-	vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
-	
-    for (uint32_t i = 0; i < m_swapchainImageViews.size(); i++) {
-		vkDestroyImageView(m_device, m_swapchainImageViews[i], nullptr);
-	}
-}
-
-
 void Engine::draw(){
     vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, true, 1000000000);
     vkResetFences(m_device, 1, &getCurrentFrame().renderFence);
 
 	uint32_t swapchainImageIndex;
-	VkResult acquireResult = vkAcquireNextImageKHR(m_device, m_swapchain, 1000000000, getCurrentFrame().swapchainSemaphore, VK_NULL_HANDLE, &swapchainImageIndex);
+	VkResult acquireResult = vkAcquireNextImageKHR(m_device, m_swapchain->swapchain, 1000000000, getCurrentFrame().swapchainSemaphore, VK_NULL_HANDLE, &swapchainImageIndex);
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
 		//resize_swapchain();
 		return;
@@ -220,15 +209,11 @@ void Engine::draw(){
 
     vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
 
+ 	transitionImage(cmd, m_swapchain->images[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
-    	//make the swapchain image into writeable mode before rendering
-	transitionImage(cmd, m_swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-
-	//make a clear-color from frame number. This will flash with a 120 frame period.
 	VkClearColorValue clearValue;
-	float flash = std::abs(std::sin(m_frameNumber / 120.f));
+	float flash = std::abs(std::sin(frameNumber / 120.f));
 	clearValue = { { 0.0f, 0.0f, flash, 1.0f } };
-
 
     VkImageSubresourceRange subImage {};
     subImage.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -238,13 +223,10 @@ void Engine::draw(){
     subImage.layerCount = VK_REMAINING_ARRAY_LAYERS;
 	VkImageSubresourceRange clearRange = subImage;
 
-	//clear image
-	vkCmdClearColorImage(cmd, m_swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
+	vkCmdClearColorImage(cmd, m_swapchain->images[swapchainImageIndex], VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
 
-	//make the swapchain image into presentable mode
-	transitionImage(cmd, m_swapchainImages[swapchainImageIndex],VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	transitionImage(cmd, m_swapchain->images[swapchainImageIndex],VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
-	//finalize the command buffer (we can no longer add commands, but it can now be executed)
 	vkEndCommandBuffer(cmd);
 
     VkCommandBufferSubmitInfo commandBufferSubmitInfo = {
@@ -290,14 +272,13 @@ void Engine::draw(){
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &getCurrentFrame().renderSemaphore,
         .swapchainCount = 1,
-        .pSwapchains = &m_swapchain,
+        .pSwapchains = &m_swapchain->swapchain,
         .pImageIndices = &swapchainImageIndex
     };
 
 	vkQueuePresentKHR(m_graphicsQueue, &presentInfo);
 
-	//increase the number of frames drawn
-	m_frameNumber++;
+	frameNumber++;
 }
 
 void Engine::transitionImage(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout)
@@ -334,8 +315,6 @@ void Engine::transitionImage(VkCommandBuffer cmd, VkImage image, VkImageLayout c
 
     vkCmdPipelineBarrier2(cmd, &depInfo);
 }
-
-
 
 void Engine::run(){
     SDL_Event e;
