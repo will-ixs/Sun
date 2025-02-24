@@ -94,6 +94,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
+# set(VMA_DYNAMIC_VULKAN_FUNCTIONS ON)
+# set(VMA_STATIC_VULKAN_FUNCTIONS OFF)
+# set(VMA_BUILD_DOCS OFF CACHE BOOL "Disable Doxygen documentation")
+FetchContent_Declare(
+    VulkanMemoryAllocator
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+    GIT_TAG v3.0.1
+)
+FetchContent_MakeAvailable(VulkanMemoryAllocator)
+
 # Create Executable
 add_executable(VulkanProject 
     src/main.cpp
@@ -108,19 +118,23 @@ target_include_directories(VulkanProject PRIVATE
     ${glm_SOURCE_DIR}
     ${vkbootstrap_SOURCE_DIR}
     ${imgui_SOURCE_DIR}
+    ${VulkanMemoryAllocator_SOURCE_DIR}/include
 )
 
 # Link Libraries
 target_link_libraries(VulkanProject PRIVATE 
-    Vulkan::Vulkan
+    ${Vulkan_LIBRARY}
     SDL3::SDL3
     glm::glm
     vk-bootstrap::vk-bootstrap
 )
 
+message(STATUS "Vulkan Include Directory: ${Vulkan_INCLUDE_DIRS}")
+message(STATUS "Vulkan Library:  ${Vulkan_LIBRARY}")
+
 # Enable compiler warnings
 if (MSVC)
-    target_compile_options(VulkanProject PRIVATE /W4 /WX)
+    target_compile_options(VulkanProject PRIVATE /W4)
 else()
-    target_compile_options(VulkanProject PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(VulkanProject PRIVATE -Wall -Wextra -Wpedantic)
 endif()

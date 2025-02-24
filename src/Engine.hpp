@@ -2,7 +2,7 @@
 #define ENGINE_HPP
 
 #include <vulkan/vulkan.h>
-#include <vma/vk_mem_alloc.h>
+#include <vk_mem_alloc.h>
 
 #include <vector>
 #include <memory>
