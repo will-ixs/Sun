@@ -36,7 +36,6 @@ class Engine
 {
 private:
     //Initialization
-    void init();
     void initSDL3();
     void initVulkan();
     void initSwapchain();
@@ -72,11 +71,15 @@ private:
     //Queue Info
 	VkQueue m_graphicsQueue;
 	uint32_t m_graphicsQueueFamily;
+
+    bool cleanedUp;
     
 public:
     Engine();
     ~Engine();
+    void init();
     void run();
+    void cleanup();
 
     FrameData frameData[2];
 	FrameData& getCurrentFrame() { return frameData[frameNumber % 2]; };

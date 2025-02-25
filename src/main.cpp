@@ -2,7 +2,9 @@
 #include "Engine.hpp"
 
 int main(){
-    Engine e;    
+    Engine e;
+    e.init();    
     e.run();
+    e.cleanup();
     return 0;
 }

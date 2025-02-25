@@ -14,11 +14,16 @@
 
 Engine::Engine()
 {
-    init();
 }
 
 Engine::~Engine()
 {
+    if(!cleanedUp){
+        cleanup();
+    }
+}
+
+void Engine::cleanup(){
     vkDeviceWaitIdle(m_device);
 
     for (int i = 0; i < 2; i++) {
@@ -39,10 +44,12 @@ Engine::~Engine()
 	vkb::destroy_debug_utils_messenger(m_instance, m_debugMessenger);
 	vkDestroyInstance(m_instance, nullptr);
 	SDL_DestroyWindow(m_pWindow);
+
+    cleanedUp = true;
 }
 
-
 void Engine::init(){
+    cleanedUp = false;
     initSDL3();
     
     initVulkan();
@@ -201,27 +208,29 @@ void Engine::draw(){
     VkCommandBuffer cmd = getCurrentFrame().commandBuffer;
     vkResetCommandBuffer(cmd, 0);
 
-    VkCommandBufferBeginInfo commandBufferBeginInfo = {};
-    commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    commandBufferBeginInfo.pNext = nullptr;
-    commandBufferBeginInfo.pInheritanceInfo = nullptr;
-    commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VkCommandBufferBeginInfo commandBufferBeginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = nullptr
+    };
 
     vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
 
  	transitionImage(cmd, m_swapchain->images[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
+    float flash = std::abs(std::sin(frameNumber / 120.f));
 	VkClearColorValue clearValue;
-	float flash = std::abs(std::sin(frameNumber / 120.f));
 	clearValue = { { 0.0f, 0.0f, flash, 1.0f } };
 
-    VkImageSubresourceRange subImage {};
-    subImage.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    subImage.baseMipLevel = 0;
-    subImage.levelCount = VK_REMAINING_MIP_LEVELS;
-    subImage.baseArrayLayer = 0;
-    subImage.layerCount = VK_REMAINING_ARRAY_LAYERS;
-	VkImageSubresourceRange clearRange = subImage;
+    VkImageSubresourceRange clearRange {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0,
+        .levelCount = VK_REMAINING_MIP_LEVELS,
+        .baseArrayLayer = 0,
+        .layerCount = VK_REMAINING_ARRAY_LAYERS
+    };
+
 
 	vkCmdClearColorImage(cmd, m_swapchain->images[swapchainImageIndex], VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
 
