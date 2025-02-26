@@ -11,6 +11,7 @@
 #include <iostream>
 
 #include "Swapchain.hpp"
+#include "Image.hpp"
 
 Engine::Engine()
 {
@@ -55,6 +56,8 @@ void Engine::init(){
     initVulkan();
     
     initSwapchain();
+
+    initDrawResources();
     
     initCommands();
     
@@ -167,8 +170,44 @@ void Engine::initCommands(){
 }
 
 void Engine::initSwapchain(){
+    windowWidth = 1600;
+    windowHeight = 900;
     m_swapchain = std::make_unique<Swapchain>(m_device, m_physicalDevice, m_surface);
-    m_swapchain->createSwapchain(1600, 900);
+    m_swapchain->createSwapchain(windowWidth, windowHeight);
+}
+
+void Engine::initDrawResources(){
+    //Initialize images
+    VkFormat drawImgFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    VkFormat depthImgFormat = VK_FORMAT_D32_SFLOAT;
+
+    VkImageUsageFlags drawImgUsage = {};
+    drawImgUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    drawImgUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    drawImgUsage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    VkImageUsageFlags depthImgUsage = {};
+    depthImgUsage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+    VkExtent3D drawImgExtent = {
+        .width = windowWidth,
+        .height = windowHeight,
+        .depth = 1
+    };
+
+    drawExtent.width = drawImgExtent.width;
+    drawExtent.height = drawImgExtent.height;
+
+    drawImage = std::make_unique<Image>(m_device, m_allocator, 
+        drawImgExtent, drawImgFormat, drawImgUsage,
+        VK_IMAGE_ASPECT_COLOR_BIT,
+        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT
+    );
+
+    depthImage = std::make_unique<Image>(m_device, m_allocator, 
+        drawImgExtent, depthImgFormat, depthImgUsage,
+        VK_IMAGE_ASPECT_DEPTH_BIT,
+        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT
+    );
 }
 
 void Engine::initSynchronization(){

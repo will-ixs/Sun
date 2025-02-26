@@ -109,6 +109,7 @@ add_executable(VulkanProject
     src/main.cpp
     src/Engine.cpp
     src/Swapchain.cpp
+    src/Image.cpp
 )
 
 # Include Directories
@@ -123,14 +124,14 @@ target_include_directories(VulkanProject PRIVATE
 
 # Link Libraries
 target_link_libraries(VulkanProject PRIVATE 
-    ${Vulkan_LIBRARY}
+    Vulkan::Vulkan
     SDL3::SDL3
     glm::glm
     vk-bootstrap::vk-bootstrap
 )
 
-message(STATUS "Vulkan Include Directory: ${Vulkan_INCLUDE_DIRS}")
-message(STATUS "Vulkan Library:  ${Vulkan_LIBRARY}")
+#message(STATUS "Vulkan Include Directory: ${Vulkan_INCLUDE_DIRS}")
+#message(STATUS "Vulkan Library:  ${Vulkan_LIBRARY}")
 
 # Enable compiler warnings
 if (MSVC)

@@ -16,14 +16,6 @@ struct FrameData{
     VkFence renderFence;
 };
 
-struct Image{
-    VkImage image;
-    VkImageView view;
-    VkExtent3D extent;
-    VkFormat format;
-    VmaAllocation allocation;
-};
-
 struct Buffer{
     VkBuffer buffer;
     VmaAllocation allocation;
@@ -31,6 +23,7 @@ struct Buffer{
 };
 
 class Swapchain;
+class Image;
 
 class Engine
 {
@@ -39,6 +32,7 @@ private:
     void initSDL3();
     void initVulkan();
     void initSwapchain();
+    void initDrawResources();
     void initCommands();
     void initSynchronization();
 
@@ -52,6 +46,8 @@ private:
     bool m_bUseDebugMessenger = false;
     
     struct SDL_Window* m_pWindow {nullptr};
+    uint32_t windowWidth;
+    uint32_t windowHeight;
 
     //Vulkan Resources
     VkInstance m_instance;
@@ -65,7 +61,8 @@ private:
     std::unique_ptr<Swapchain> m_swapchain;
 
     //Draw Resources
-    Image drawImage;
+    std::unique_ptr<Image> drawImage;
+    std::unique_ptr<Image> depthImage;
     VkExtent2D drawExtent; 
 
     //Queue Info
