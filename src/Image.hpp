@@ -10,6 +10,8 @@ private:
 public:
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_NONE;
     VkExtent3D extent{};
     VkFormat format{};
     VmaAllocation allocation = VK_NULL_HANDLE;
@@ -20,9 +22,11 @@ public:
     ~Image();
 
     void createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAllocFlags);
-    void createImageView(VkImageAspectFlags aspect);
+    void createImageView();
     void destroy();
 
-    void transitionImage();
-    void copyImage();
+    void transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void copyTo(VkCommandBuffer cmd, const Image& dstImage);
+
+    static void transitionVulkanImage(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 };

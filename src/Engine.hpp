@@ -38,8 +38,6 @@ private:
 
     //drawing
     void draw();
-    
-    void transitionImage(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout);
 
     //Optons
     bool m_bUseValidation = false;
