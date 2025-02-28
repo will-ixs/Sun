@@ -35,6 +35,9 @@ void Engine::cleanup(){
         vkDestroySemaphore(m_device, frameData[i].swapchainSemaphore, nullptr);
     }
 
+    drawImage->destroy();
+    depthImage->destroy();
+
     vmaDestroyAllocator(m_allocator);
 
     m_swapchain->destroySwapchain();
@@ -234,10 +237,13 @@ void Engine::draw(){
     vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, true, 1000000000);
     vkResetFences(m_device, 1, &getCurrentFrame().renderFence);
 
-	uint32_t swapchainImageIndex;
-	VkResult acquireResult = vkAcquireNextImageKHR(m_device, m_swapchain->swapchain, 1000000000, getCurrentFrame().swapchainSemaphore, VK_NULL_HANDLE, &swapchainImageIndex);
+	uint32_t index;
+	VkResult acquireResult = vkAcquireNextImageKHR(m_device, m_swapchain->swapchain, 1000000000, getCurrentFrame().swapchainSemaphore, VK_NULL_HANDLE, &index);
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
-		//resize_swapchain();
+        int32_t w = 0;
+        int32_t h = 0;
+		SDL_GetWindowSizeInPixels(m_pWindow, &w, &h);
+        m_swapchain->resizeSwapchain(w, h);
 		return;
 	}
 	else if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
@@ -246,7 +252,6 @@ void Engine::draw(){
 
     VkCommandBuffer cmd = getCurrentFrame().commandBuffer;
     vkResetCommandBuffer(cmd, 0);
-
     VkCommandBufferBeginInfo commandBufferBeginInfo = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .pNext = nullptr,
@@ -256,12 +261,12 @@ void Engine::draw(){
 
     vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
 
- 	Image::transitionVulkanImage(cmd, m_swapchain->images[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+ 	drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
+    //Draw
     float flash = std::abs(std::sin(frameNumber / 120.f));
 	VkClearColorValue clearValue;
 	clearValue = { { 0.0f, 0.0f, flash, 1.0f } };
-
     VkImageSubresourceRange clearRange {
         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
         .baseMipLevel = 0,
@@ -269,11 +274,12 @@ void Engine::draw(){
         .baseArrayLayer = 0,
         .layerCount = VK_REMAINING_ARRAY_LAYERS
     };
+	vkCmdClearColorImage(cmd, drawImage->image, VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
 
-
-	vkCmdClearColorImage(cmd, m_swapchain->images[swapchainImageIndex], VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
-
-	Image::transitionVulkanImage(cmd, m_swapchain->images[swapchainImageIndex],VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    drawImage->copyTo(cmd, m_swapchain->images.at(index));
+    m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
 	vkEndCommandBuffer(cmd);
 
@@ -321,7 +327,7 @@ void Engine::draw(){
         .pWaitSemaphores = &getCurrentFrame().renderSemaphore,
         .swapchainCount = 1,
         .pSwapchains = &m_swapchain->swapchain,
-        .pImageIndices = &swapchainImageIndex
+        .pImageIndices = &index
     };
 
 	vkQueuePresentKHR(m_graphicsQueue, &presentInfo);

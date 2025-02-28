@@ -5,7 +5,7 @@ class Image
 {
 private:
     VkDevice m_device;
-    VmaAllocator m_allocator;
+    VmaAllocator m_allocator = VK_NULL_HANDLE;
     bool cleanedUp = false;
 public:
     VkImage image = VK_NULL_HANDLE;
@@ -19,6 +19,7 @@ public:
     Image() = delete;
     Image(VkDevice device, VmaAllocator allocator, VkExtent3D extent, VkFormat format, 
         VkImageUsageFlags usage, VkImageAspectFlags aspectFlags, VmaAllocationCreateFlags vmaAllocFlags);
+    Image(VkDevice device, VkImage s_Image, VkImageView s_ImageView, VkExtent3D extent, VkFormat format);
     ~Image();
 
     void createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAllocFlags);
@@ -26,7 +27,7 @@ public:
     void destroy();
 
     void transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout);
-    void copyTo(VkCommandBuffer cmd, const Image& dstImage);
+    void copyTo(VkCommandBuffer cmd, Image& dstImage);
 
     static void transitionVulkanImage(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 };

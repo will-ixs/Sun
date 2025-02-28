@@ -5,6 +5,8 @@
 #include <VkBootstrap.h>
 #include <vector>
 
+class Image;
+
 class Swapchain
 {
 private:
@@ -16,10 +18,9 @@ private:
 public:    
     //Swapchain's resources
     VkSwapchainKHR swapchain;
-    VkFormat imageFormat;
-    std::vector<VkImage> images;
-    std::vector<VkImageView> imageViews;
+    std::vector<Image> images;
     VkExtent2D extent;
+    VkFormat format;
     
     Swapchain() = delete;
     Swapchain(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface);

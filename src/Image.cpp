@@ -10,6 +10,14 @@ m_device(device), m_allocator(allocator), extent(imgExtent), format(imgFormat), 
     createImageView();
 }
 
+
+Image::Image(VkDevice device, VkImage image, VkImageView imageView, VkExtent3D imageExtent, VkFormat imageFormat)
+:
+m_device(device), image(image), view(imageView), extent(imageExtent), format(imageFormat)
+{
+    
+}
+
 Image::~Image()
 {
     if(!cleanedUp){
@@ -73,6 +81,12 @@ void Image::destroy(){
         vkDestroyImageView(m_device, view, nullptr);
         view = VK_NULL_HANDLE;
     }
+    if(!m_allocator){ //Should only be swapchain images, which are destroyed by the VkDestroySwapchain call
+        cleanedUp = true;
+        return;
+    }
+
+
     if (image != VK_NULL_HANDLE) {
         vmaDestroyImage(m_allocator, image, allocation);
         image = VK_NULL_HANDLE;
@@ -158,7 +172,7 @@ void Image::transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLa
     vkCmdPipelineBarrier2(cmd, &dependencyInfo);
 }
 
-void Image::copyTo(VkCommandBuffer cmd, const Image& dstImage){
+void Image::copyTo(VkCommandBuffer cmd, Image& dstImage){
     VkOffset3D zeroOffset = {
         0, 0, 0
     };
