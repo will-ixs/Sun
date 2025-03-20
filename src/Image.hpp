@@ -7,6 +7,7 @@ private:
     VkDevice m_device;
     VmaAllocator m_allocator = VK_NULL_HANDLE;
     bool cleanedUp = false;
+    bool m_swapchain = false;
 public:
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
@@ -19,7 +20,7 @@ public:
     Image() = delete;
     Image(VkDevice device, VmaAllocator allocator, VkExtent3D extent, VkFormat format, 
         VkImageUsageFlags usage, VkImageAspectFlags aspectFlags, VmaAllocationCreateFlags vmaAllocFlags);
-    Image(VkDevice device, VkImage s_Image, VkImageView s_ImageView, VkExtent3D extent, VkFormat format);
+    Image(VkDevice device, VkImage s_Image, VkImageView s_ImageView, VkExtent3D extent, VkFormat format, VkImageAspectFlags imageAspect, bool swapchainImage);
     ~Image();
 
     void createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAllocFlags);

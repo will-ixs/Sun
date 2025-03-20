@@ -40,7 +40,7 @@ void Swapchain::createSwapchain(uint32_t width, uint32_t height){
 	};
 
 	for(size_t i=0; i < swapchainImages.size(); i++){
-		images.emplace_back(Image(m_device, swapchainImages.at(i), swapchainImageViews.at(i), imageExtent, format));
+		images.emplace_back(Image(m_device, swapchainImages.at(i), swapchainImageViews.at(i), imageExtent, format, VK_IMAGE_ASPECT_COLOR_BIT, true));
 	}
 }
 
@@ -56,7 +56,7 @@ void Swapchain::destroySwapchain(){
 	vkDestroySwapchainKHR(m_device, swapchain, nullptr);
 	
     for(size_t i = 0; i < images.size(); i++){
-		images.at(i).destroy();
+		vkDestroyImageView(m_device, images.at(i).view, nullptr);
 	}
 
 	images.clear();

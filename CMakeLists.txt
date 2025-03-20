@@ -110,6 +110,7 @@ add_executable(VulkanProject
     src/Engine.cpp
     src/Swapchain.cpp
     src/Image.cpp
+    src/PipelineBuilder.cpp
 )
 
 # Include Directories
