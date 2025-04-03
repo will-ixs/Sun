@@ -10,9 +10,11 @@
 #include <cmath>
 #include <iostream>
 #include <fstream>
+#include <stdexcept>
 
 #include "Swapchain.hpp"
 #include "Image.hpp"
+#include "Buffer.hpp"
 #include "PipelineBuilder.hpp"
 
 Engine::Engine()
@@ -42,9 +44,15 @@ void Engine::cleanup(){
         vkDestroySemaphore(m_device, frameData[i].renderSemaphore, nullptr);
         vkDestroySemaphore(m_device, frameData[i].swapchainSemaphore, nullptr);
     }
+    
+    vkDestroyCommandPool(m_device, m_immTransfer.pool, nullptr);
+    vkDestroyFence(m_device, m_immTransfer.fence, nullptr);
 
     drawImage->destroy();
     depthImage->destroy();
+
+    rectangle.vertexBuffer->destroy();
+    rectangle.indexBuffer->destroy();
 
     vmaDestroyAllocator(m_allocator);
 
@@ -77,6 +85,8 @@ void Engine::init(){
     initDescriptors();
 
     initPipelines();
+
+    initData();
 }
 //Initialization
 void Engine::initSDL3(){
@@ -165,6 +175,8 @@ void Engine::initVulkan(){
 
     m_graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
     m_graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+    m_transferQueue = vkbDevice.get_queue(vkb::QueueType::transfer).value();
+    m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::transfer).value();
 
     VmaAllocatorCreateInfo allocatorInfo = {
         .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
@@ -198,6 +210,23 @@ void Engine::initCommands(){
 
 		vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &frameData[i].commandBuffer);
 	}
+
+    VkCommandPoolCreateInfo transferCommandPoolInfo =  {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr, 
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = m_transferQueueFamily
+    };
+    vkCreateCommandPool(m_device, &transferCommandPoolInfo, nullptr, &m_immTransfer.pool);
+    VkCommandBufferAllocateInfo cmdAllocInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .commandPool = m_immTransfer.pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1
+    };
+    vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &m_immTransfer.buffer);
+    
 }
 
 void Engine::initSwapchain(){
@@ -259,6 +288,8 @@ void Engine::initSynchronization(){
 		vkCreateSemaphore(m_device, &semInfo, nullptr, &frameData[i].swapchainSemaphore);
 		vkCreateSemaphore(m_device, &semInfo, nullptr, &frameData[i].renderSemaphore);
 	}
+
+    vkCreateFence(m_device, &fenceInfo, nullptr, &m_immTransfer.fence);
 }
 
 void Engine::initDescriptors(){
@@ -389,6 +420,33 @@ void Engine::initMeshPipeline(){
 	vkDestroyShaderModule(m_device, vert, nullptr);
 	vkDestroyShaderModule(m_device, frag, nullptr);
 }
+
+void Engine::initData(){
+    std::array<Vertex,4> rectVerts;
+
+	rectVerts[0].position = {0.5,-0.5, 0};
+	rectVerts[1].position = {0.5,0.5, 0};
+	rectVerts[2].position = {-0.5,-0.5, 0};
+	rectVerts[3].position = {-0.5,0.5, 0};
+
+	rectVerts[0].color = {0,0, 0,1};
+	rectVerts[1].color = { 0.5,0.5,0.5 ,1};
+	rectVerts[2].color = { 1,0, 0,1 };
+	rectVerts[3].color = { 0,1, 0,1 };
+
+	std::array<uint32_t,6> rectIndices;
+
+	rectIndices[0] = 0;
+	rectIndices[1] = 1;
+	rectIndices[2] = 2;
+
+	rectIndices[3] = 2;
+	rectIndices[4] = 1;
+	rectIndices[5] = 3;
+
+	rectangle = uploadMesh(rectIndices,rectVerts);
+}
+
 //Utility
 bool Engine::loadShader(VkShaderModule* outShader, const char* filePath) {
 	std::ifstream file(filePath, std::ios::ate | std::ios::binary);
@@ -413,6 +471,91 @@ bool Engine::loadShader(VkShaderModule* outShader, const char* filePath) {
         return false;
     }
     return true;
+}
+
+MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices){
+    size_t vertexBufferSize = vertices.size() * sizeof(Vertex);
+	size_t indexBufferSize = indices.size() * sizeof(uint32_t);
+
+	MeshData mesh = {};
+	mesh.indexCount = (uint32_t)indices.size();
+
+    VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    VkBufferUsageFlags indexUsage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VkBufferUsageFlags stagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+    mesh.vertexBuffer = std::make_unique<Buffer>(m_device, m_allocator, vertexBufferSize, vertexUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+    mesh.indexBuffer = std::make_unique<Buffer>(m_device, m_allocator, indexBufferSize, indexUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+    Buffer stagingBuffer(m_device, m_allocator, vertexBufferSize + indexBufferSize, stagingUsage, VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+
+	VkBufferDeviceAddressInfo addressInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = mesh.vertexBuffer->buffer
+    };
+	mesh.vertexBufferAddress = vkGetBufferDeviceAddress(m_device, &addressInfo);
+	
+	if (stagingBuffer.allocationInfo.pMappedData == nullptr) {
+		throw std::runtime_error("Staging buffer not mapped.");
+	}
+
+	memcpy(stagingBuffer.allocationInfo.pMappedData, vertices.data(), vertexBufferSize);
+	memcpy((char*)stagingBuffer.allocationInfo.pMappedData + vertexBufferSize, indices.data(), indexBufferSize);
+
+	prepImmediateTransfer();
+
+	VkBufferCopy vert_copy = {};
+	vert_copy.size = vertexBufferSize;
+	vert_copy.srcOffset = 0;
+	vert_copy.dstOffset = 0;
+
+	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer.buffer, mesh.vertexBuffer->buffer, 1, &vert_copy);
+
+	VkBufferCopy ind_copy = {};
+	ind_copy.size = indexBufferSize;
+	ind_copy.srcOffset = vertexBufferSize;
+	ind_copy.dstOffset = 0;
+
+	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer.buffer, mesh.indexBuffer->buffer, 1, &ind_copy);
+
+	submitImmediateTransfer();
+
+    stagingBuffer.destroy();
+	return mesh;
+}
+//Transfer
+void Engine::prepImmediateTransfer(){
+    vkResetFences(m_device, 1, &m_immTransfer.fence);
+	vkResetCommandBuffer(m_immTransfer.buffer, 0);
+
+	VkCommandBufferBeginInfo begin = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+    };
+
+	vkBeginCommandBuffer(m_immTransfer.buffer, &begin);
+}
+
+void Engine::submitImmediateTransfer(){
+
+    vkEndCommandBuffer(m_immTransfer.buffer);
+
+	VkCommandBufferSubmitInfo cmdInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        .pNext = nullptr,
+        .commandBuffer = m_immTransfer.buffer
+    };
+	VkSubmitInfo2 submit {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .pNext = nullptr,
+        .commandBufferInfoCount = 1,
+        .pCommandBufferInfos = &cmdInfo,
+    };
+	vkQueueSubmit2(m_transferQueue, 1, &submit, m_immTransfer.fence);
+
+	vkWaitForFences(m_device, 1, &m_immTransfer.fence, true, 9999999999);
 }
 
 //Drawing
@@ -569,7 +712,7 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     
     
-    // PushConstants pcs;
+    PushConstants pcs;
     // for (const MeshData& mesh : meshes) {
     //     pcs.vb_addr = mesh.vertex_buffer_address;
     //     pcs.model = mesh.model_mat;
@@ -578,7 +721,13 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     //     vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
     // }
 
-    vkCmdDraw(cmd, 3, 1, 0, 0);
+	pcs.worldMatrix = glm::mat4{ 1.f };
+	pcs.vertexBuffer = rectangle.vertexBufferAddress;
+
+	vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
+	vkCmdBindIndexBuffer(cmd, rectangle.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
+
+	vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
 
     vkCmdEndRendering(cmd);
 }

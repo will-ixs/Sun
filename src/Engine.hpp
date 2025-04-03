@@ -5,31 +5,14 @@
 #include <vk_mem_alloc.h>
 
 #include <vector>
+#include <array>
+#include <span>
 #include <memory>
-
-struct FrameData{
-	VkCommandPool commandPool;
-	VkCommandBuffer commandBuffer;
-
-    VkSemaphore swapchainSemaphore;
-    VkSemaphore renderSemaphore;
-    VkFence renderFence;
-};
-
-struct Buffer{
-    VkBuffer buffer;
-    VmaAllocation allocation;
-    VmaAllocationInfo info;  
-};
-
-struct PushConstants{
-    int modelIndex;
-    int textureIndex;
-    int materialIndex;
-};
+#include "types.h"
 
 class Swapchain;
 class Image;
+class Buffer;
 class PipelineBuilder;
 
 class Engine
@@ -44,9 +27,11 @@ private:
     void initSynchronization();
     void initDescriptors();
     void initPipelines();
+    void initData();
 
     //Util
     bool loadShader(VkShaderModule* outShader, const char* filePath);
+    MeshData uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
     
     //Pipelines
     void initMeshPipeline();
@@ -94,11 +79,19 @@ private:
     //Queue Info
 	VkQueue m_graphicsQueue;
 	uint32_t m_graphicsQueueFamily;
+	VkQueue m_transferQueue;
+	uint32_t m_transferQueueFamily;
 
     //Draw Resources
     std::unique_ptr<Image> drawImage;
     std::unique_ptr<Image> depthImage;
     VkExtent2D drawExtent; 
+
+    MeshData rectangle;
+
+    ImmediateTransfer m_immTransfer;
+    void prepImmediateTransfer();
+    void submitImmediateTransfer();
 
     bool cleanedUp;
     
