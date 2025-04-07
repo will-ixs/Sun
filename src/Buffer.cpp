@@ -29,7 +29,6 @@ void Buffer::createBuffer(VkBufferUsageFlags bufferUsage, VmaMemoryUsage memoryU
 
     VkResult res = vmaCreateBuffer(m_allocator, &bufferInfo, &allocationCreateInfo, &buffer, &allocation, &allocationInfo);
     if(res != VK_SUCCESS){
-        std::cout << string_VkResult(res) << std::endl;
         throw std::runtime_error("Failed to create buffer");
     }
 }

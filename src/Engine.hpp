@@ -8,12 +8,14 @@
 #include <array>
 #include <span>
 #include <memory>
+#include <SDL3/SDL_timer.h>
 #include "types.h"
 
 class Swapchain;
 class Image;
 class Buffer;
 class PipelineBuilder;
+class MeshUploader;
 
 class Engine
 {
@@ -31,7 +33,6 @@ private:
 
     //Util
     bool loadShader(VkShaderModule* outShader, const char* filePath);
-    MeshData uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
     
     //Pipelines
     void initMeshPipeline();
@@ -88,21 +89,25 @@ private:
     VkExtent2D drawExtent; 
 
     MeshData rectangle;
+    std::vector<MeshAsset> testMeshes;
 
     ImmediateTransfer m_immTransfer;
     void prepImmediateTransfer();
     void submitImmediateTransfer();
 
     bool cleanedUp;
-    
-public:
+    uint64_t initializationTime = 0;
+    public:
     Engine();
     ~Engine();
     void init();
     void run();
     void cleanup();
-
+    
+    MeshData uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
+    
     FrameData frameData[2];
+    uint64_t getTime() {return SDL_GetTicks() - initializationTime; }
 	FrameData& getCurrentFrame() { return frameData[frameNumber % 2]; };
     uint64_t frameNumber = 0;
 };

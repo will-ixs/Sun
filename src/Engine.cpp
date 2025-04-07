@@ -10,13 +10,17 @@
 #include <cmath>
 #include <iostream>
 #include <fstream>
+#include <filesystem>
 #include <stdexcept>
 
 #include "Swapchain.hpp"
 #include "Image.hpp"
 #include "Buffer.hpp"
 #include "PipelineBuilder.hpp"
+#include "MeshLoader.hpp"
 
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+                                                          
 Engine::Engine()
 {
 }
@@ -53,6 +57,10 @@ void Engine::cleanup(){
 
     rectangle.vertexBuffer->destroy();
     rectangle.indexBuffer->destroy();
+    for(MeshAsset& mesh : testMeshes){
+        mesh.data.indexBuffer->destroy();
+        mesh.data.vertexBuffer->destroy();
+    }
 
     vmaDestroyAllocator(m_allocator);
 
@@ -87,6 +95,8 @@ void Engine::init(){
     initPipelines();
 
     initData();
+
+    uint64_t initializationTime = SDL_GetTicks();
 }
 //Initialization
 void Engine::initSDL3(){
@@ -413,6 +423,7 @@ void Engine::initMeshPipeline(){
 	pb->setMultisamplingNone();
 	pb->disableBlending();
 	pb->enableDepthtest(VK_TRUE, VK_COMPARE_OP_GREATER_OR_EQUAL);
+    // pb->disableDepthtest();
 	pb->setColorAttachmentFormat(drawImage->format);
 	pb->setDepthAttachmentFormat(depthImage->format);
 	meshPipeline = pb->buildPipeline(m_device);
@@ -445,6 +456,8 @@ void Engine::initData(){
 	rectIndices[5] = 3;
 
 	rectangle = uploadMesh(rectIndices,rectVerts);
+    
+    MeshLoader::loadGltfMeshes(this, testMeshes, "..\\..\\resources\\basicmesh.glb");
 }
 
 //Utility
@@ -486,7 +499,7 @@ MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> verti
 
     mesh.vertexBuffer = std::make_unique<Buffer>(m_device, m_allocator, vertexBufferSize, vertexUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
     mesh.indexBuffer = std::make_unique<Buffer>(m_device, m_allocator, indexBufferSize, indexUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
-    Buffer stagingBuffer(m_device, m_allocator, vertexBufferSize + indexBufferSize, stagingUsage, VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    std::unique_ptr<Buffer> stagingBuffer = std::make_unique<Buffer>(m_device, m_allocator, vertexBufferSize + indexBufferSize, stagingUsage, VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
 
 	VkBufferDeviceAddressInfo addressInfo = {
@@ -496,12 +509,12 @@ MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> verti
     };
 	mesh.vertexBufferAddress = vkGetBufferDeviceAddress(m_device, &addressInfo);
 	
-	if (stagingBuffer.allocationInfo.pMappedData == nullptr) {
+	if (stagingBuffer->allocationInfo.pMappedData == nullptr) {
 		throw std::runtime_error("Staging buffer not mapped.");
 	}
 
-	memcpy(stagingBuffer.allocationInfo.pMappedData, vertices.data(), vertexBufferSize);
-	memcpy((char*)stagingBuffer.allocationInfo.pMappedData + vertexBufferSize, indices.data(), indexBufferSize);
+	memcpy(stagingBuffer->allocationInfo.pMappedData, vertices.data(), vertexBufferSize);
+	memcpy((char*)stagingBuffer->allocationInfo.pMappedData + vertexBufferSize, indices.data(), indexBufferSize);
 
 	prepImmediateTransfer();
 
@@ -510,18 +523,18 @@ MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> verti
 	vert_copy.srcOffset = 0;
 	vert_copy.dstOffset = 0;
 
-	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer.buffer, mesh.vertexBuffer->buffer, 1, &vert_copy);
+	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer->buffer, mesh.vertexBuffer->buffer, 1, &vert_copy);
 
 	VkBufferCopy ind_copy = {};
 	ind_copy.size = indexBufferSize;
 	ind_copy.srcOffset = vertexBufferSize;
 	ind_copy.dstOffset = 0;
 
-	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer.buffer, mesh.indexBuffer->buffer, 1, &ind_copy);
+	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer->buffer, mesh.indexBuffer->buffer, 1, &ind_copy);
 
 	submitImmediateTransfer();
 
-    stagingBuffer.destroy();
+    stagingBuffer->destroy();
 	return mesh;
 }
 //Transfer
@@ -720,14 +733,22 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     //     vkCmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
     //     vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
     // }
+    
+	// glm::mat4 view = glm::lookAt(glm::vec3(0.0f, -2.0f, -2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::mat4 rot = glm::rotate(glm::mat4(1.0), glm::radians(180.0f), glm::vec3(0.0, 1.0, 0.0f));
+    glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -2.0f)) * rot;
+	glm::mat4 projection = glm::perspectiveFovZO(glm::radians(70.0f), 1600.0f, 900.0f, 0.1f, 5.0f);
+	projection[1][1] *= -1;
 
-	pcs.worldMatrix = glm::mat4{ 1.f };
-	pcs.vertexBuffer = rectangle.vertexBufferAddress;
+	pcs.worldMatrix = glm::mat4(1.0) * projection * view;
+	pcs.vertexBuffer = testMeshes.at(2).data.vertexBufferAddress;
 
+
+    
 	vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
-	vkCmdBindIndexBuffer(cmd, rectangle.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
-
-	vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+	vkCmdBindIndexBuffer(cmd, testMeshes.at(2).data.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
+    
+	vkCmdDrawIndexed(cmd, testMeshes.at(2).surfaces.at(0).count, 1, testMeshes.at(2).surfaces.at(0).startIndex, 0, 0);
 
     vkCmdEndRendering(cmd);
 }

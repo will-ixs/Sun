@@ -1,8 +1,12 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+#include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <memory>
+#include <string>
+#include <vector>
 
 class Buffer;
 class Image;
@@ -41,9 +45,18 @@ struct MeshData {
     std::unique_ptr<Buffer> indexBuffer;
     std::unique_ptr<Buffer> vertexBuffer;
     VkDeviceAddress vertexBufferAddress;	
-    glm::mat4 model_mat;
+    glm::mat4 modelMat;
 	uint32_t indexCount;
 };
 
+struct Surface {
+    uint32_t startIndex;
+    uint32_t count;
+};
 
+struct MeshAsset {
+    std::string name;
+    std::vector<Surface> surfaces;
+    MeshData data;
+};
 #endif

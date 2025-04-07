@@ -14,6 +14,7 @@ find_program(glslc_executable NAMES glslc HINTS Vulkan::glslc)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
 
+#compile shaders cmake: https://stackoverflow.com/a/68457439
 #==============================================================================
 # COMPILE SHADERS
 #
@@ -80,11 +81,11 @@ FetchContent_MakeAvailable(glm)
 
 # vk-bootstrap
 FetchContent_Declare(
-    fetch_vk_bootstrap
+    vk_bootstrap
     GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
     GIT_TAG        v1.4.307
 )
-FetchContent_MakeAvailable(fetch_vk_bootstrap)
+FetchContent_MakeAvailable(vk_bootstrap)
 
 # ImGui
 FetchContent_Declare(
@@ -104,6 +105,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(VulkanMemoryAllocator)
 
+FetchContent_Declare(
+    fastgltf
+    GIT_REPOSITORY https://github.com/spnda/fastgltf.git
+    GIT_TAG v0.8.0
+)
+FetchContent_MakeAvailable(fastgltf)
+
 # Create Executable
 add_executable(VulkanProject 
     src/main.cpp
@@ -112,6 +120,7 @@ add_executable(VulkanProject
     src/Image.cpp
     src/Buffer.cpp
     src/PipelineBuilder.cpp
+    src/MeshLoader.cpp
 )
 
 # Include Directories
@@ -130,6 +139,7 @@ target_link_libraries(VulkanProject PRIVATE
     SDL3::SDL3
     glm::glm
     vk-bootstrap::vk-bootstrap
+    fastgltf::fastgltf
 )
 
 #message(STATUS "Vulkan Include Directory: ${Vulkan_INCLUDE_DIRS}")
