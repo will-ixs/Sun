@@ -419,7 +419,7 @@ void Engine::initMeshPipeline(){
 	pb->setShaders(vert, frag);
 	pb->setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	pb->setPolygonMode(VK_POLYGON_MODE_FILL);
-	pb->setCullingMode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_CLOCKWISE);
+	pb->setCullingMode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE);
 	pb->setMultisamplingNone();
 	pb->disableBlending();
 	pb->enableDepthtest(VK_TRUE, VK_COMPARE_OP_GREATER_OR_EQUAL);
@@ -734,16 +734,13 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     //     vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
     // }
     
-	// glm::mat4 view = glm::lookAt(glm::vec3(0.0f, -2.0f, -2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    glm::mat4 rot = glm::rotate(glm::mat4(1.0), glm::radians(180.0f), glm::vec3(0.0, 1.0, 0.0f));
-    glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -2.0f)) * rot;
-	glm::mat4 projection = glm::perspectiveFovZO(glm::radians(70.0f), 1600.0f, 900.0f, 0.1f, 5.0f);
+	glm::mat4 view = glm::lookAt(glm::vec3(2.0f, 2.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    // glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -5.0f));
+	glm::mat4 projection = glm::perspectiveFovZO(glm::radians(70.0f), (float)drawExtent.width, (float)drawExtent.height, 500.0f, 0.01f);
 	projection[1][1] *= -1;
 
 	pcs.worldMatrix = glm::mat4(1.0) * projection * view;
 	pcs.vertexBuffer = testMeshes.at(2).data.vertexBufferAddress;
-
-
     
 	vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
 	vkCmdBindIndexBuffer(cmd, testMeshes.at(2).data.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
