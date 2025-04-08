@@ -96,7 +96,7 @@ void Engine::init(){
 
     initData();
 
-    uint64_t initializationTime = SDL_GetTicks();
+    initializationTime = SDL_GetTicks();
 }
 //Initialization
 void Engine::initSDL3(){
@@ -175,10 +175,18 @@ void Engine::initVulkan(){
     vkb::DeviceBuilder vkbBuilder { physicalDevice };
 
     vkb::Device vkbDevice = vkbBuilder.build().value();
-
-    SAMPLER_COUNT = physicalDevice.properties.limits.maxDescriptorSetSamplers;
-    STORAGE_COUNT = physicalDevice.properties.limits.maxDescriptorSetStorageBuffers;
-    IMAGE_COUNT = physicalDevice.properties.limits.maxDescriptorSetStorageImages;
+    uint32_t sampler = physicalDevice.properties.limits.maxDescriptorSetSamplers;
+    uint32_t buffer = physicalDevice.properties.limits.maxDescriptorSetStorageBuffers;
+    uint32_t images = physicalDevice.properties.limits.maxDescriptorSetStorageImages;
+    if(sampler < SAMPLER_COUNT){
+        SAMPLER_COUNT = sampler;
+    }
+    if(buffer < STORAGE_COUNT){
+        STORAGE_COUNT = buffer;
+    }
+    if(images < IMAGE_COUNT){
+        IMAGE_COUNT = images;
+    }
 
     m_physicalDevice = physicalDevice.physical_device;
     m_device = vkbDevice.device;
