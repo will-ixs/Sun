@@ -14,6 +14,7 @@
 #include <stdexcept>
 
 #include "Swapchain.hpp"
+#include "Camera.hpp"
 #include "Image.hpp"
 #include "Buffer.hpp"
 #include "PipelineBuilder.hpp"
@@ -75,7 +76,8 @@ void Engine::cleanup(){
 
     cleanedUp = true;
 }
-
+//TODO
+//Simple materials
 void Engine::init(){
     cleanedUp = false;
     initSDL3();
@@ -96,7 +98,8 @@ void Engine::init(){
 
     initData();
 
-    initializationTime = SDL_GetTicks();
+    initializationTime = SDL_GetTicksNS();
+    cam = std::make_unique<Camera>((float)drawExtent.width, (float)drawExtent.height);
 }
 //Initialization
 void Engine::initSDL3(){
@@ -690,7 +693,7 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     color_attachment.pNext = nullptr;
     color_attachment.imageView = drawImage->view;
     color_attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     
     VkRenderingAttachmentInfo depth_attachment = {};
@@ -742,12 +745,11 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     //     vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
     // }
     
-	glm::mat4 view = glm::lookAt(glm::vec3(2.0f, 2.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    // glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -5.0f));
-	glm::mat4 projection = glm::perspectiveFovZO(glm::radians(70.0f), (float)drawExtent.width, (float)drawExtent.height, 500.0f, 0.01f);
-	projection[1][1] *= -1;
-
-	pcs.worldMatrix = glm::mat4(1.0) * projection * view;
+    // glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 2.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+	// glm::mat4 projection = glm::perspectiveFovZO(glm::radians(70.0f), (float)drawExtent.width, (float)drawExtent.height, 500.0f, 0.001f);	
+    // projection[1][1] *= -1;
+	
+    pcs.worldMatrix = cam->getRenderMatrix();
 	pcs.vertexBuffer = testMeshes.at(2).data.vertexBufferAddress;
     
 	vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
@@ -762,7 +764,8 @@ void Engine::run(){
     SDL_Event e;
     bool quit = false;
     while(!quit){
-
+        uint64_t currentTime = SDL_GetTicksNS() - initializationTime;
+        deltaTime = currentTime - lastTime;
         while(SDL_PollEvent(&e) != 0){
             switch (e.type)
             {
@@ -776,11 +779,57 @@ void Engine::run(){
                 //stopRendering = false;
                 break;
             case SDL_EVENT_KEY_DOWN:
-                std::cout << "Pressed Key: " << SDL_GetKeyName(e.key.key) << std::endl;
+            {
+                switch(e.key.key){
+                    case SDLK_ESCAPE:
+                        quit = true;
+                        break;
+                    case SDLK_W:
+                        cam->updateVelocity(glm::vec3(0.0f, 0.0f, 1.0f));
+                        break;
+                    case SDLK_S:
+                        cam->updateVelocity(glm::vec3(0.0f, 0.0f, -1.0f));
+                        break;
+                    case SDLK_A:
+                        cam->updateVelocity(glm::vec3(-1.0f, 0.0f, 0.0f));
+                        break;
+                    case SDLK_D:
+                        cam->updateVelocity(glm::vec3(1.0f, 0.0f, 0.0f));
+                        break;
+                }
+                break;
+            }
+            case SDL_EVENT_KEY_UP:
+            {
+                switch(e.key.key){
+                    case SDLK_ESCAPE:
+                        quit = true;
+                        break;
+                    case SDLK_W:
+                        cam->updateVelocity(glm::vec3(0.0f, 0.0f, -1.0f));
+                        break;
+                    case SDLK_S:
+                        cam->updateVelocity(glm::vec3(0.0f, 0.0f, 1.0f));
+                        break;
+                    case SDLK_A:
+                        cam->updateVelocity(glm::vec3(1.0f, 0.0f, 0.0f));
+                        break;
+                    case SDLK_D:
+                        cam->updateVelocity(glm::vec3(-1.0f, 0.0f, 0.0f));
+                        break;
+                }
+                break;
+            }
+            case SDL_EVENT_MOUSE_MOTION:
+            {
+                cam->updateLook(e.motion.xrel, e.motion.yrel);
+                break;
+            }
             default:
                 break;
             }
         }
+        cam->updatePosition(deltaTime);
 
         //stopRendering
             //continue
@@ -789,5 +838,6 @@ void Engine::run(){
         //ImplVulkanNewFrame, ImpleSDL3NewFrame
         
         draw();
+        lastTime = currentTime; 
     }
 }

@@ -16,6 +16,7 @@ class Image;
 class Buffer;
 class PipelineBuilder;
 class MeshUploader;
+class Camera;
 
 class Engine
 {
@@ -33,7 +34,10 @@ private:
 
     //Util
     bool loadShader(VkShaderModule* outShader, const char* filePath);
-    
+    ImmediateTransfer m_immTransfer;
+    void prepImmediateTransfer();
+    void submitImmediateTransfer();
+
     //Pipelines
     void initMeshPipeline();
 
@@ -91,13 +95,14 @@ private:
     MeshData rectangle;
     std::vector<MeshAsset> testMeshes;
 
-    ImmediateTransfer m_immTransfer;
-    void prepImmediateTransfer();
-    void submitImmediateTransfer();
+    std::unique_ptr<Camera> cam;
 
     bool cleanedUp;
     uint64_t initializationTime = 0;
-    public:
+    uint64_t deltaTime = 0;
+    uint64_t lastTime = 0;
+
+public:
     Engine();
     ~Engine();
     void init();
