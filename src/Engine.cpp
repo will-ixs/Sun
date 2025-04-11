@@ -78,6 +78,7 @@ void Engine::cleanup(){
 }
 //TODO
 //Simple materials
+//Input manage, cam -> shared_ptr
 void Engine::init(){
     cleanedUp = false;
     initSDL3();
@@ -108,9 +109,11 @@ void Engine::initSDL3(){
     
     SDL_WindowFlags SdlWindowFlags = 0;
     SdlWindowFlags |= SDL_WINDOW_VULKAN;
+    SdlWindowFlags |= SDL_WINDOW_RESIZABLE;
     
     SDL_Init(SdlInitFlags);
     m_pWindow = SDL_CreateWindow("Engine", 1600, 900, SdlWindowFlags);
+    SDL_SetWindowRelativeMouseMode(m_pWindow, true);
 }
 
 void Engine::initVulkan(){
@@ -678,8 +681,10 @@ void Engine::draw(){
 
 	VkResult presentRes = vkQueuePresentKHR(m_graphicsQueue, &presentInfo);
 	if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_SUBOPTIMAL_KHR) {
-        //resizeSwwapchain
-        std::cout << "needs to resize" << std::endl;
+        int32_t w = 0;
+        int32_t h = 0;
+		SDL_GetWindowSizeInPixels(m_pWindow, &w, &h);
+        m_swapchain->resizeSwapchain(w, h);
 	}
 	else if (presentRes != VK_SUCCESS) {
 		std::cout << "Failed to present to swapchain" << std::endl;
@@ -784,6 +789,10 @@ void Engine::run(){
                     case SDLK_ESCAPE:
                         quit = true;
                         break;
+                    case SDLK_Q:
+                        mouseCaptured = !mouseCaptured;
+                        SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
+                        break;
                     case SDLK_W:
                         cam->updateVelocity(glm::vec3(0.0f, 0.0f, 1.0f));
                         break;
@@ -822,7 +831,9 @@ void Engine::run(){
             }
             case SDL_EVENT_MOUSE_MOTION:
             {
-                cam->updateLook(e.motion.xrel, e.motion.yrel);
+                if(mouseCaptured){
+                    cam->updateLook(e.motion.xrel, e.motion.yrel);
+                }
                 break;
             }
             default:

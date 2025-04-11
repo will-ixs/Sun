@@ -98,6 +98,7 @@ private:
     std::unique_ptr<Camera> cam;
 
     bool cleanedUp;
+    bool mouseCaptured = true;
     uint64_t initializationTime = 0;
     uint64_t deltaTime = 0;
     uint64_t lastTime = 0;
