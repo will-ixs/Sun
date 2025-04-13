@@ -18,11 +18,10 @@ class PipelineBuilder;
 class MeshUploader;
 class Camera;
 
-constexpr uint32_t sideLength = 4;
-constexpr uint32_t instanceCount = sideLength * sideLength;
-constexpr glm::vec3 gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
-constexpr float particleMass = 1.0f;
-constexpr uint32_t solverIterations = 5;
+constexpr uint32_t sideLength = 15;
+constexpr uint32_t instanceCount = sideLength * sideLength * sideLength;
+constexpr float particleMass = 10.0f;
+constexpr uint32_t solverIterations = 3;
 
 class Engine
 {
@@ -112,11 +111,27 @@ private:
     glm::vec3 minBoundingPos;
     std::vector<ParticleData> particleInfo;
     std::vector<glm::vec4> positionDeltas;
+    std::vector<glm::vec3> particleCollisions;
+    std::vector<float> particleLambdas;
+    std::vector<std::vector<int>> particleNeighbors;
+
     std::unique_ptr<Buffer> hostPositionBuffer;
     std::unique_ptr<Buffer> devicePositionBuffer;
     void updatePositionBuffer();
     void updateParticlePositions();
     glm::vec3 clampDeltaToBounds(uint32_t index);
+
+    glm::vec3 gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
+    float gravityRotation = 0.0f;
+    
+    float smoothingRadius = 2.25f;
+    float restDensity = 1000.0f;
+    float epsilon = 1e-3f;
+    float densityKernel(float r);
+    float gradientKernel(float r);
+    void resetPersistentParticleData();
+    void resetParticlePositions();
+    void randomizeParticlePositions();
 
 public:
     Engine();

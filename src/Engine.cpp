@@ -12,6 +12,7 @@
 #include <fstream>
 #include <filesystem>
 #include <stdexcept>
+#include <random>
 
 #include "Swapchain.hpp"
 #include "Camera.hpp"
@@ -114,7 +115,8 @@ void Engine::initSDL3(){
     
     SDL_Init(SdlInitFlags);
     m_pWindow = SDL_CreateWindow("Engine", 1600, 900, SdlWindowFlags);
-    SDL_SetWindowRelativeMouseMode(m_pWindow, true);
+    mouseCaptured = false;
+    SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
 }
 
 void Engine::initVulkan(){
@@ -458,17 +460,19 @@ void Engine::initData(){
         throw std::runtime_error("Host position buffer not mapped.");
     }
 
-    maxBoundingPos = glm::vec3(5.0f, 5.0f, 0.0f);
-    minBoundingPos = glm::vec3(-5.0f, -5.0f, 0.0f);
+    maxBoundingPos = glm::vec3(30.0f, 15.0f, 30.0f);
+    minBoundingPos = glm::vec3(-30.0f, -15.0f, -30.0f);
 
     particleInfo.reserve(instanceCount);
-    positionDeltas.reserve(instanceCount);
+    positionDeltas.resize(instanceCount);
+    particleCollisions.resize(instanceCount);
+    particleLambdas.resize(instanceCount);
+    particleNeighbors.resize(instanceCount);
     glm::vec3 step = (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
 
     for (int x = 0; x < sideLength; ++x) {
         for (int y = 0; y < sideLength; ++y) {
-            // for (int z = 0; z < sideLength; ++z) {
-                int z = 0;
+            for (int z = 0; z < sideLength; ++z) {
                 glm::vec3 pos = minBoundingPos + glm::vec3(x, y, z) * step;
                 ParticleData data = {
                     .currPosition = glm::vec4(pos, 1.0f),
@@ -476,14 +480,13 @@ void Engine::initData(){
                     .velocity = glm::vec4(0.0f)
                 };
                 particleInfo.push_back(data);
-            // }
+            }
         }
     }
-    for(int i =0; i < instanceCount; i++){
-        positionDeltas.push_back(glm::vec4(0.0f));
-    }
+
+    resetPersistentParticleData();
     
-   updatePositionBuffer();
+    updatePositionBuffer();
 
     VkDescriptorBufferInfo bufferInfo = {
         .buffer = devicePositionBuffer->buffer,
@@ -640,6 +643,7 @@ glm::vec3 Engine::clampDeltaToBounds(uint32_t index){
     glm::vec4 pos = particleInfo.at(index).currPosition;
     glm::vec4 delta = positionDeltas.at(index);
     glm::vec4 newPos = pos + delta;
+    float dampingFactor = 0.9f;
     glm::vec3 collision = glm::vec3(1.0f);
 
     float radius = 0.1f;
@@ -647,38 +651,93 @@ glm::vec3 Engine::clampDeltaToBounds(uint32_t index){
     // X axis
     if (newPos.x - radius < minBoundingPos.x){
         delta.x = minBoundingPos.x + radius - pos.x;
-        collision.x *= -1;
+        collision.x *= -dampingFactor;
     } else if (newPos.x + radius > maxBoundingPos.x){
         delta.x = maxBoundingPos.x - radius - pos.x;
-        collision.x *= -1;
+        collision.x *= -dampingFactor;
     }
 
     // Y axis
     if (newPos.y - radius < minBoundingPos.y){
         delta.y = minBoundingPos.y + radius - pos.y;
-        collision.y *= -1;
+        collision.y *= -dampingFactor;
     } else if (newPos.y + radius > maxBoundingPos.y){
         delta.y = maxBoundingPos.y - radius - pos.y;
-        collision.y *= -1;
+        collision.y *= -dampingFactor;
     }
 
     // Z axis
-    // if (newPos.z - radius < minBoundingPos.z){
-    //     delta.z = minBoundingPos.z + radius - pos.z;
-    //     collision.z *= -1;
-    // } else if (newPos.z + radius > maxBoundingPos.z) {
-    //     delta.z = maxBoundingPos.z - radius - pos.z;
-    //     collision.z *= -1;
-    // }  
+    if (newPos.z - radius < minBoundingPos.z){
+        delta.z = minBoundingPos.z + radius - pos.z;
+        collision.z *= -dampingFactor;
+    } else if (newPos.z + radius > maxBoundingPos.z) {
+        delta.z = maxBoundingPos.z - radius - pos.z;
+        collision.z *= -dampingFactor;
+    }  
     positionDeltas.at(index) = delta;
     return collision;
 }
 
-void Engine::updateParticlePositions(){
-    float h = deltaTime;
+float Engine::densityKernel(float r){
+    float factor = 315.0f / (64.0f * glm::pi<float>() * (float)std::pow(smoothingRadius, 9.0f));
+    return factor * (float)std::pow(((smoothingRadius * smoothingRadius) - (r * r)), 3.0f);
+}
 
-    std::vector<glm::vec3> collisions;
-    collisions.reserve(instanceCount);
+float Engine::gradientKernel(float r){
+    float factor = 45.0f / (glm::pi<float>() * (float)std::pow(smoothingRadius, 6.0f));
+    return factor * (float)std::pow((smoothingRadius - r), 2.0f);
+}
+
+void Engine::resetPersistentParticleData(){
+    for(int i = 0; i < instanceCount; i++){
+        positionDeltas.at(i) = glm::vec4(0.0f);
+        particleCollisions.at(i) = glm::vec3(0.0f);
+        particleLambdas.at(i) = 0.0f;
+        particleNeighbors.at(i).clear();
+    }
+}
+
+void Engine::resetParticlePositions(){
+    
+    glm::vec3 step = 0.5f * (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
+    particleInfo.clear();
+    for (int x = 0; x < sideLength; ++x) {
+        for (int y = 0; y < sideLength; ++y) {
+            for (int z = 0; z < sideLength; ++z) {
+                glm::vec3 pos = minBoundingPos + glm::vec3(x, y, z) * step;
+                ParticleData data = {
+                    .currPosition = glm::vec4(pos, 1.0f),
+                    .prevPosition = glm::vec4(pos, 1.0f),
+                    .velocity = glm::vec4(0.0f)
+                };
+                particleInfo.push_back(data);
+            }
+        }
+    }
+}
+
+void Engine::randomizeParticlePositions(){
+    std::minstd_rand rng(std::random_device{}());
+
+    std::uniform_real_distribution<float> unitDist(0.0f, 1.0f);
+    glm::vec3 size = maxBoundingPos - minBoundingPos;
+
+    for (size_t i = 0; i < instanceCount; ++i) {
+        glm::vec3 pos(
+            minBoundingPos.x + unitDist(rng) * size.x,
+            minBoundingPos.y + unitDist(rng) * size.y,
+            minBoundingPos.z + unitDist(rng) * size.z
+        );
+        particleInfo.at(i).currPosition = glm::vec4(pos, 1.0f);
+        particleInfo.at(i).prevPosition = glm::vec4(pos, 1.0f);
+        particleInfo.at(i).velocity = glm::vec4(0.0f);
+    }
+}
+
+void Engine::updateParticlePositions(){
+    
+    resetPersistentParticleData();
+    float h = deltaTime;
 
     //Unconstrained Step (Position Prediction)
     for(int i = 0; i < particleInfo.size(); i++){
@@ -689,32 +748,86 @@ void Engine::updateParticlePositions(){
 
     //Apply Constraints
     for(int i = 0; i < particleInfo.size(); i++){
-        //Find neighbors
-    
+        for (int j = 0; j < particleInfo.size(); j++) {
+            if (i == j) continue;
+            if (glm::length(particleInfo.at(i).currPosition - particleInfo.at(j).currPosition) < smoothingRadius) {
+                particleNeighbors[i].push_back(j);
+            }
+        }
     }
 
-    for(int s = 0; s < solverIterations; s++){
-        // for(int i = 0; i < particleInfo.size(); i++){
-        //     //calculate lambdai
-        // }
+    for (int s = 0; s < solverIterations; s++) {
+        // Step 1: Calculate lambdas
+        for (int i = 0; i < particleInfo.size(); i++) {
+            glm::vec3 particle = glm::vec3(particleInfo[i].currPosition);
+            
+            // Compute density
+            float density = 0.0f;
+
+            for (int j : particleNeighbors[i]) {
+                glm::vec3 neighbor = glm::vec3(particleInfo[j].currPosition);
+
+                float r = glm::length(particle - neighbor);
+                if (r * r < (smoothingRadius * smoothingRadius)){
+                    density += densityKernel(r);
+                }
+            }
+    
+            float Ci = (density / restDensity) - 1.0f;
+    
+            // Compute ∑ |∇C_i|²
+            float gradSum = 0.0f;
+            glm::vec3 grad_i(0.0f);
+
+            for (int j : particleNeighbors[i]) {
+                glm::vec3 neighbor = glm::vec3(particleInfo[j].currPosition);
+
+                glm::vec3 grad = (gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor)) / restDensity;
+                
+                gradSum += glm::dot(grad, grad);
+                grad_i += grad;
+            }
+
+            grad_i = -grad_i;
+            gradSum += glm::dot(grad_i, grad_i); // include self term
+    
+            particleLambdas[i] = -Ci / (gradSum + epsilon);
+        }
+
+        //Reset deltas
         for(int i = 0; i < instanceCount; i++){
             positionDeltas.at(i) = glm::vec4(0.0f);
         }
+
+        //Calculate dpi
+        //Collision response
         for(int i = 0; i < particleInfo.size(); i++){
-            //calculate dpi -> positionDeltas.at(i)
-            //collision detection and response (clamp djpi, invert velocity)
-            collisions.push_back(clampDeltaToBounds(i));
+            glm::vec3 particle = glm::vec3(particleInfo[i].currPosition);
+            glm::vec3 delta(0.0f);
+            for (int j : particleNeighbors[i]) {
+                glm::vec3 neighbor = glm::vec3(particleInfo[j].currPosition);
+
+                glm::vec3 grad = gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor);
+                
+                delta += (particleLambdas[i] + particleLambdas[j]) * grad;
+            }
+            delta /= restDensity;
+            positionDeltas.at(i) = glm::vec4(delta, 0.0f);
+            particleCollisions.at(i) = clampDeltaToBounds(i);
         }
+
+        //Apply dpi
         for(int i = 0; i < particleInfo.size(); i++){
             particleInfo.at(i).currPosition += positionDeltas.at(i);
         }
-                  
     }
+
+    //Set velocity, bounce 
     for(int i = 0; i < particleInfo.size(); i++){
         particleInfo.at(i).velocity = (1/h) * (particleInfo.at(i).currPosition - particleInfo.at(i).prevPosition);
-        particleInfo.at(i).velocity.x *= collisions.at(i).x;
-        particleInfo.at(i).velocity.y *= collisions.at(i).y;
-        particleInfo.at(i).velocity.z *= collisions.at(i).z;
+        particleInfo.at(i).velocity.x *= particleCollisions.at(i).x;
+        particleInfo.at(i).velocity.y *= particleCollisions.at(i).y;
+        particleInfo.at(i).velocity.z *= particleCollisions.at(i).z;
     }
 }
 //Drawing
@@ -881,10 +994,7 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     //     vkCmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
     //     vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
     // }
-    
-    // glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 2.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-	// glm::mat4 projection = glm::perspectiveFovZO(glm::radians(70.0f), (float)drawExtent.width, (float)drawExtent.height, 500.0f, 0.001f);	
-    // projection[1][1] *= -1;
+
 	pcs.instanceIndex = 0;
     pcs.worldMatrix = cam->getRenderMatrix();
 	pcs.vertexBuffer = testMeshes.at(1).data.vertexBufferAddress;
@@ -937,6 +1047,39 @@ void Engine::run(){
                     case SDLK_D:
                         cam->updateVelocity(glm::vec3(1.0f, 0.0f, 0.0f));
                         break;
+                    case SDLK_1:
+                    {
+                        gravityRotation -= 15.0f * deltaTime;
+                        glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(gravityRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+                        gravityForce = glm::vec3(rotationMatrix * glm::vec4(gravityForce, 1.0f));
+                        // gravityForce = glm::vec3(9.81f, 0.0f, 0.0f);
+                        break;
+                    }
+                    case SDLK_2:
+                    {
+                        gravityRotation += 15.0f * deltaTime;
+                        glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(gravityRotation), glm::vec3(0.0f, 0.0f, 1.0f));
+                        gravityForce = glm::vec3(rotationMatrix * glm::vec4(gravityForce, 1.0f));
+                        // gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
+                        break;
+                    }                    
+                    case SDLK_3:
+                    {
+                        gravityRotation += 15.0f * deltaTime;
+                        glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(gravityRotation), glm::vec3(1.0f, 0.0f, 0.0f));
+                        gravityForce = glm::vec3(rotationMatrix * glm::vec4(gravityForce, 1.0f));
+                        // gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
+                        break;
+                    }
+                    case SDLK_R:
+                    {
+                        resetParticlePositions();
+                    }
+                    case SDLK_G:
+                    {
+                        randomizeParticlePositions();
+                    }
+
                 }
                 break;
             }
@@ -982,6 +1125,12 @@ void Engine::run(){
         updateParticlePositions();
         updatePositionBuffer();
         draw();
+        if(frameNumber % 144 == 0){
+            double frameTime = (SDL_GetTicksNS() - initializationTime - currentTime) / 1e6;
+            char title[64];
+            sprintf(title, "Fluid Sim - %.4f ms / %.4f fps", frameTime, 1.0/ (frameTime / 1e3));
+            SDL_SetWindowTitle(m_pWindow, title);
+        }
         lastTime = currentTime; 
     }
 }
@@ -989,4 +1138,7 @@ void Engine::run(){
 
 
 //TODO
-//start CPU sim, check previous PBD examples & code
+//update vorticity confinement and XSPH viscosity
+//tweak parameters (imgui?)
+//optimize neighbor lookup
+//change it all into a compute shader

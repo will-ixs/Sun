@@ -25,6 +25,7 @@ public:
     ~Camera();
 
     glm::mat4 getRenderMatrix();
+    glm::mat4 getOrthoRenderMatrix();
     void updateLook(float dx, float dy);
     void updateVelocity(glm::vec3 dp);
     void updatePosition(float deltaTime);
