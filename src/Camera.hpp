@@ -27,7 +27,7 @@ public:
     glm::mat4 getRenderMatrix();
     void updateLook(float dx, float dy);
     void updateVelocity(glm::vec3 dp);
-    void updatePosition(uint64_t deltaTime);
+    void updatePosition(float deltaTime);
 };
 
 #endif

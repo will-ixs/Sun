@@ -7,13 +7,13 @@
 
 Camera::Camera()
 :
-position(0.0f, 2.0f, 5.0f), rotations(0.0f, 0.0f), forward(0.0f, 0.0f, 1.0f), velocity(0.0f, 0.0f, 0.0f),
+position(0.0f, 2.0f, 5.0f), rotations(0.0f, -90.0f), forward(0.0f, 0.0f, 1.0f), velocity(0.0f, 0.0f, 0.0f),
 zNear(500.0f), zFar(0.01f), fov(glm::radians(70.0f)), viewportWidth(1600.0f), viewportHeight(900.0f)
 {
 }
 Camera::Camera(float width, float height)
 :
-position(0.0f, 2.0f, 5.0f), rotations(0.0f, 0.0f), forward(0.0f, 0.0f, 1.0f), velocity(0.0f, 0.0f, 0.0f),
+position(0.0f, 2.0f, 5.0f), rotations(0.0f, -90.0f), forward(0.0f, 0.0f, 1.0f), velocity(0.0f, 0.0f, 0.0f),
 zNear(500.0f), zFar(0.01f), fov(glm::radians(70.0f)), viewportWidth(width), viewportHeight(height)
 {
 }
@@ -52,7 +52,7 @@ void Camera::updateLook(float dx, float dy){
 void Camera::updateVelocity(glm::vec3 dp){
     velocity += dp;
 }
-void Camera::updatePosition(uint64_t deltaTime){
+void Camera::updatePosition(float deltaTime){
     velocity *= 0.95;    
     glm::vec3 right = glm::cross(forward, worldUp);
 
@@ -60,6 +60,5 @@ void Camera::updatePosition(uint64_t deltaTime){
     deltaPos += forward * velocity[2];
     deltaPos += right * velocity[0];
 
-    float dtSeconds = (float)deltaTime / 1e9f;
-    position += (deltaPos * dtSeconds);
+    position += (deltaPos * deltaTime);
 }

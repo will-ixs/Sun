@@ -29,8 +29,7 @@ struct ImmediateTransfer{
 struct PushConstants{
     glm::mat4 worldMatrix;
     VkDeviceAddress vertexBuffer; 
-    uint32_t textureIndex;
-    uint32_t materialIndex;
+    uint32_t instanceIndex;
 };
 
 struct Vertex {
@@ -59,4 +58,11 @@ struct MeshAsset {
     std::vector<Surface> surfaces;
     MeshData data;
 };
+
+struct ParticleData {
+    glm::vec4 currPosition;
+    glm::vec4 prevPosition;
+    glm::vec4 velocity;
+};
+
 #endif

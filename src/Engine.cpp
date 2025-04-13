@@ -56,12 +56,13 @@ void Engine::cleanup(){
     drawImage->destroy();
     depthImage->destroy();
 
-    rectangle.vertexBuffer->destroy();
-    rectangle.indexBuffer->destroy();
     for(MeshAsset& mesh : testMeshes){
         mesh.data.indexBuffer->destroy();
         mesh.data.vertexBuffer->destroy();
     }
+
+    hostPositionBuffer->destroy();
+    devicePositionBuffer->destroy();
 
     vmaDestroyAllocator(m_allocator);
 
@@ -354,9 +355,9 @@ void Engine::initDescriptors(){
     };
 
     std::vector<VkDescriptorBindingFlags> bindingFlags = {
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
     };
     VkDescriptorSetLayoutBindingFlagsCreateInfo layoutBindingFlags = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
@@ -447,29 +448,63 @@ void Engine::initMeshPipeline(){
 }
 
 void Engine::initData(){
-    std::array<Vertex,4> rectVerts;
+    hostPositionBuffer = std::make_unique<Buffer>(m_device, m_allocator, instanceCount * sizeof(ParticleData), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
-	rectVerts[0].position = {0.5,-0.5, 0};
-	rectVerts[1].position = {0.5,0.5, 0};
-	rectVerts[2].position = {-0.5,-0.5, 0};
-	rectVerts[3].position = {-0.5,0.5, 0};
+    devicePositionBuffer = std::make_unique<Buffer>(m_device, m_allocator, instanceCount * sizeof(ParticleData), 
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
 
-	rectVerts[0].color = {0,0, 0,1};
-	rectVerts[1].color = { 0.5,0.5,0.5 ,1};
-	rectVerts[2].color = { 1,0, 0,1 };
-	rectVerts[3].color = { 0,1, 0,1 };
+    if (hostPositionBuffer->allocationInfo.pMappedData == nullptr) {
+        throw std::runtime_error("Host position buffer not mapped.");
+    }
 
-	std::array<uint32_t,6> rectIndices;
+    maxBoundingPos = glm::vec3(5.0f, 5.0f, 0.0f);
+    minBoundingPos = glm::vec3(-5.0f, -5.0f, 0.0f);
 
-	rectIndices[0] = 0;
-	rectIndices[1] = 1;
-	rectIndices[2] = 2;
+    particleInfo.reserve(instanceCount);
+    positionDeltas.reserve(instanceCount);
+    glm::vec3 step = (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
 
-	rectIndices[3] = 2;
-	rectIndices[4] = 1;
-	rectIndices[5] = 3;
+    for (int x = 0; x < sideLength; ++x) {
+        for (int y = 0; y < sideLength; ++y) {
+            // for (int z = 0; z < sideLength; ++z) {
+                int z = 0;
+                glm::vec3 pos = minBoundingPos + glm::vec3(x, y, z) * step;
+                ParticleData data = {
+                    .currPosition = glm::vec4(pos, 1.0f),
+                    .prevPosition = glm::vec4(pos, 1.0f),
+                    .velocity = glm::vec4(0.0f)
+                };
+                particleInfo.push_back(data);
+            // }
+        }
+    }
+    for(int i =0; i < instanceCount; i++){
+        positionDeltas.push_back(glm::vec4(0.0f));
+    }
+    
+   updatePositionBuffer();
 
-	rectangle = uploadMesh(rectIndices,rectVerts);
+    VkDescriptorBufferInfo bufferInfo = {
+        .buffer = devicePositionBuffer->buffer,
+        .offset = 0,
+        .range = instanceCount * sizeof(ParticleData)
+    };
+
+    VkWriteDescriptorSet writeDescriptorSet = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr, 
+        .dstSet = m_descriptorSet,
+        .dstBinding = STORAGE_BINDING,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .pImageInfo = nullptr,
+        .pBufferInfo = &bufferInfo,
+        .pTexelBufferView = nullptr
+    };
+
+    vkUpdateDescriptorSets(m_device, 1, &writeDescriptorSet, 0, nullptr);
     
     MeshLoader::loadGltfMeshes(this, testMeshes, "..\\..\\resources\\basicmesh.glb");
 }
@@ -585,6 +620,103 @@ void Engine::submitImmediateTransfer(){
 	vkWaitForFences(m_device, 1, &m_immTransfer.fence, true, 9999999999);
 }
 
+void Engine::updatePositionBuffer(){
+    memcpy(hostPositionBuffer->allocationInfo.pMappedData, particleInfo.data(), particleInfo.size() * sizeof(ParticleData));
+    
+    prepImmediateTransfer();
+    
+    VkBufferCopy instanceCopy = {
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = instanceCount * sizeof(ParticleData)
+    };
+    
+    vkCmdCopyBuffer(m_immTransfer.buffer, hostPositionBuffer->buffer, devicePositionBuffer->buffer, 1, &instanceCopy);
+    
+    submitImmediateTransfer();
+}
+
+glm::vec3 Engine::clampDeltaToBounds(uint32_t index){
+    glm::vec4 pos = particleInfo.at(index).currPosition;
+    glm::vec4 delta = positionDeltas.at(index);
+    glm::vec4 newPos = pos + delta;
+    glm::vec3 collision = glm::vec3(1.0f);
+
+    float radius = 0.1f;
+
+    // X axis
+    if (newPos.x - radius < minBoundingPos.x){
+        delta.x = minBoundingPos.x + radius - pos.x;
+        collision.x *= -1;
+    } else if (newPos.x + radius > maxBoundingPos.x){
+        delta.x = maxBoundingPos.x - radius - pos.x;
+        collision.x *= -1;
+    }
+
+    // Y axis
+    if (newPos.y - radius < minBoundingPos.y){
+        delta.y = minBoundingPos.y + radius - pos.y;
+        collision.y *= -1;
+    } else if (newPos.y + radius > maxBoundingPos.y){
+        delta.y = maxBoundingPos.y - radius - pos.y;
+        collision.y *= -1;
+    }
+
+    // Z axis
+    // if (newPos.z - radius < minBoundingPos.z){
+    //     delta.z = minBoundingPos.z + radius - pos.z;
+    //     collision.z *= -1;
+    // } else if (newPos.z + radius > maxBoundingPos.z) {
+    //     delta.z = maxBoundingPos.z - radius - pos.z;
+    //     collision.z *= -1;
+    // }  
+    positionDeltas.at(index) = delta;
+    return collision;
+}
+
+void Engine::updateParticlePositions(){
+    float h = deltaTime;
+
+    std::vector<glm::vec3> collisions;
+    collisions.reserve(instanceCount);
+
+    //Unconstrained Step (Position Prediction)
+    for(int i = 0; i < particleInfo.size(); i++){
+        particleInfo.at(i).prevPosition = particleInfo.at(i).currPosition;
+        particleInfo.at(i).velocity += glm::vec4((h / particleMass) * (particleMass * gravityForce), 0.0f); //- damping * velocity)
+        particleInfo.at(i).currPosition += (particleInfo.at(i).velocity * h);
+    }
+
+    //Apply Constraints
+    for(int i = 0; i < particleInfo.size(); i++){
+        //Find neighbors
+    
+    }
+
+    for(int s = 0; s < solverIterations; s++){
+        // for(int i = 0; i < particleInfo.size(); i++){
+        //     //calculate lambdai
+        // }
+        for(int i = 0; i < instanceCount; i++){
+            positionDeltas.at(i) = glm::vec4(0.0f);
+        }
+        for(int i = 0; i < particleInfo.size(); i++){
+            //calculate dpi -> positionDeltas.at(i)
+            //collision detection and response (clamp djpi, invert velocity)
+            collisions.push_back(clampDeltaToBounds(i));
+        }
+        for(int i = 0; i < particleInfo.size(); i++){
+            particleInfo.at(i).currPosition += positionDeltas.at(i);
+        }
+                  
+    }
+    for(int i = 0; i < particleInfo.size(); i++){
+        particleInfo.at(i).velocity = (1/h) * (particleInfo.at(i).currPosition - particleInfo.at(i).prevPosition);
+        particleInfo.at(i).velocity.x *= collisions.at(i).x;
+        particleInfo.at(i).velocity.y *= collisions.at(i).y;
+        particleInfo.at(i).velocity.z *= collisions.at(i).z;
+    }
+}
 //Drawing
 void Engine::draw(){
     VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, VK_TRUE, 1000000000);
@@ -753,14 +885,14 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     // glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 2.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 	// glm::mat4 projection = glm::perspectiveFovZO(glm::radians(70.0f), (float)drawExtent.width, (float)drawExtent.height, 500.0f, 0.001f);	
     // projection[1][1] *= -1;
-	
+	pcs.instanceIndex = 0;
     pcs.worldMatrix = cam->getRenderMatrix();
-	pcs.vertexBuffer = testMeshes.at(2).data.vertexBufferAddress;
+	pcs.vertexBuffer = testMeshes.at(1).data.vertexBufferAddress;
     
 	vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
-	vkCmdBindIndexBuffer(cmd, testMeshes.at(2).data.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
+	vkCmdBindIndexBuffer(cmd, testMeshes.at(1).data.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
     
-	vkCmdDrawIndexed(cmd, testMeshes.at(2).surfaces.at(0).count, 1, testMeshes.at(2).surfaces.at(0).startIndex, 0, 0);
+	vkCmdDrawIndexed(cmd, testMeshes.at(1).surfaces.at(0).count, instanceCount, testMeshes.at(1).surfaces.at(0).startIndex, 0, 0);
 
     vkCmdEndRendering(cmd);
 }
@@ -770,7 +902,7 @@ void Engine::run(){
     bool quit = false;
     while(!quit){
         uint64_t currentTime = SDL_GetTicksNS() - initializationTime;
-        deltaTime = currentTime - lastTime;
+        deltaTime = (float)(currentTime - lastTime)/1e9f;
         while(SDL_PollEvent(&e) != 0){
             switch (e.type)
             {
@@ -847,8 +979,14 @@ void Engine::run(){
         
         //future imgui stuff
         //ImplVulkanNewFrame, ImpleSDL3NewFrame
-        
+        updateParticlePositions();
+        updatePositionBuffer();
         draw();
         lastTime = currentTime; 
     }
 }
+
+
+
+//TODO
+//start CPU sim, check previous PBD examples & code

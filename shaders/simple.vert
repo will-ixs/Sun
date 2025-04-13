@@ -1,5 +1,16 @@
 #version 450
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+struct ParticleData {
+	vec4 currPosition;
+	vec4 prevPosition;
+	vec4 velocity;
+}; 
+
+layout(set = 0, binding = 0) buffer StorageBuffer {
+    ParticleData data[];
+} storageBuffers[];
 
 layout (location = 0) out vec3 outColor;
 layout (location = 1) out vec2 outUV;
@@ -21,16 +32,18 @@ layout( push_constant ) uniform constants
 {	
 	mat4 render_matrix;
 	VertexBuffer vertexBuffer;
-    uint textureIndex;
-    uint materialIndex;
+	uint instanceBufferIndex;
 } PushConstants;
 
 void main() 
 {	
 	Vertex v = PushConstants.vertexBuffer.vertices[gl_VertexIndex];
+	vec4 instancePosition = storageBuffers[PushConstants.instanceBufferIndex].data[gl_InstanceIndex].currPosition;
 
 	//output data
-	gl_Position = PushConstants.render_matrix * vec4(v.position, 1.0f);
+	vec3 finalPos = v.position + instancePosition.xyz;
+	gl_Position = PushConstants.render_matrix * vec4(finalPos, 1.0);
+	
 	outColor = v.color.xyz;
 	outUV.x = v.uv_x;
 	outUV.y = v.uv_y;

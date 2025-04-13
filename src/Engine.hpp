@@ -18,6 +18,12 @@ class PipelineBuilder;
 class MeshUploader;
 class Camera;
 
+constexpr uint32_t sideLength = 4;
+constexpr uint32_t instanceCount = sideLength * sideLength;
+constexpr glm::vec3 gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
+constexpr float particleMass = 1.0f;
+constexpr uint32_t solverIterations = 5;
+
 class Engine
 {
 private:
@@ -92,7 +98,6 @@ private:
     std::unique_ptr<Image> depthImage;
     VkExtent2D drawExtent; 
 
-    MeshData rectangle;
     std::vector<MeshAsset> testMeshes;
 
     std::unique_ptr<Camera> cam;
@@ -100,8 +105,18 @@ private:
     bool cleanedUp;
     bool mouseCaptured = true;
     uint64_t initializationTime = 0;
-    uint64_t deltaTime = 0;
     uint64_t lastTime = 0;
+    float deltaTime = 0;
+
+    glm::vec3 maxBoundingPos;
+    glm::vec3 minBoundingPos;
+    std::vector<ParticleData> particleInfo;
+    std::vector<glm::vec4> positionDeltas;
+    std::unique_ptr<Buffer> hostPositionBuffer;
+    std::unique_ptr<Buffer> devicePositionBuffer;
+    void updatePositionBuffer();
+    void updateParticlePositions();
+    glm::vec3 clampDeltaToBounds(uint32_t index);
 
 public:
     Engine();
