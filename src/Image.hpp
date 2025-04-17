@@ -29,6 +29,4 @@ public:
 
     void transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout);
     void copyTo(VkCommandBuffer cmd, Image& dstImage);
-
-    static void transitionVulkanImage(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 };

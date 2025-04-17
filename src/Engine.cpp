@@ -4,6 +4,10 @@
 #include <SDL3/SDL_vulkan.h>
 #include <VkBootstrap.h>
 
+#include <imgui.h>
+#include <imgui_impl_sdl3.h>
+#include <imgui_impl_vulkan.h>
+
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
@@ -37,9 +41,14 @@ Engine::~Engine()
 void Engine::cleanup(){
     vkDeviceWaitIdle(m_device);
 
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+    
     vkDestroyPipelineLayout(m_device, meshPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, meshPipeline, nullptr);
 
+    vkDestroyDescriptorPool(m_device, m_ImguiPool, nullptr);
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
 	vkDestroyDescriptorSetLayout(m_device, m_descriptorLayout, nullptr);
 
@@ -100,9 +109,10 @@ void Engine::init(){
     initPipelines();
 
     initData();
+    
+    initDearImgui();
 
     initializationTime = SDL_GetTicksNS();
-    cam = std::make_unique<Camera>((float)drawExtent.width, (float)drawExtent.height);
 }
 //Initialization
 void Engine::initSDL3(){
@@ -114,7 +124,7 @@ void Engine::initSDL3(){
     SdlWindowFlags |= SDL_WINDOW_RESIZABLE;
     
     SDL_Init(SdlInitFlags);
-    m_pWindow = SDL_CreateWindow("Engine", 1600, 900, SdlWindowFlags);
+    m_pWindow = SDL_CreateWindow("Sun", 1600, 900, SdlWindowFlags);
     mouseCaptured = false;
     SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
 }
@@ -460,8 +470,8 @@ void Engine::initData(){
         throw std::runtime_error("Host position buffer not mapped.");
     }
 
-    maxBoundingPos = glm::vec3(30.0f, 15.0f, 30.0f);
-    minBoundingPos = glm::vec3(-30.0f, -15.0f, -30.0f);
+    maxBoundingPos = glm::vec3(10.0f, 15.0f, 10.0f);
+    minBoundingPos = glm::vec3(-10.0f, -15.0f, -10.0f);
 
     particleInfo.reserve(instanceCount);
     positionDeltas.resize(instanceCount);
@@ -510,6 +520,47 @@ void Engine::initData(){
     vkUpdateDescriptorSets(m_device, 1, &writeDescriptorSet, 0, nullptr);
     
     MeshLoader::loadGltfMeshes(this, testMeshes, "..\\..\\resources\\basicmesh.glb");
+
+    
+    cam = std::make_unique<Camera>((float)drawExtent.width, (float)drawExtent.height);
+}
+
+void Engine::initDearImgui(){
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE };
+
+    VkDescriptorPoolCreateInfo poolInfo = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .maxSets = 1000,
+        .poolSizeCount = 1,
+        .pPoolSizes = &poolSize
+    };
+
+    vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_ImguiPool);
+
+    ImGui::CreateContext();
+    ImGui_ImplSDL3_InitForVulkan(m_pWindow);
+    ImGui_ImplVulkan_InitInfo imguiVulkanInfo = {
+        .Instance = m_instance,
+        .PhysicalDevice = m_physicalDevice,
+        .Device = m_device,
+        .QueueFamily = m_graphicsQueueFamily,
+        .Queue = m_graphicsQueue,
+        .DescriptorPool = m_ImguiPool,
+        .MinImageCount = 2,
+        .ImageCount = 2,
+        .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
+        .UseDynamicRendering = true
+    };
+    imguiVulkanInfo.PipelineRenderingCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .pNext = nullptr,
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &m_swapchain->format
+    };
+    
+    ImGui::CreateContext();
+    ImGui_ImplVulkan_Init(&imguiVulkanInfo);
 }
 
 //Utility
@@ -623,6 +674,7 @@ void Engine::submitImmediateTransfer(){
 	vkWaitForFences(m_device, 1, &m_immTransfer.fence, true, 9999999999);
 }
 
+//PBF
 void Engine::updatePositionBuffer(){
     memcpy(hostPositionBuffer->allocationInfo.pMappedData, particleInfo.data(), particleInfo.size() * sizeof(ParticleData));
     
@@ -643,7 +695,7 @@ glm::vec3 Engine::clampDeltaToBounds(uint32_t index){
     glm::vec4 pos = particleInfo.at(index).currPosition;
     glm::vec4 delta = positionDeltas.at(index);
     glm::vec4 newPos = pos + delta;
-    float dampingFactor = 0.9f;
+    float dampingFactor = 1.0f;
     glm::vec3 collision = glm::vec3(1.0f);
 
     float radius = 0.1f;
@@ -699,7 +751,7 @@ void Engine::resetPersistentParticleData(){
 
 void Engine::resetParticlePositions(){
     
-    glm::vec3 step = 0.5f * (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
+    glm::vec3 step = (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
     particleInfo.clear();
     for (int x = 0; x < sideLength; ++x) {
         for (int y = 0; y < sideLength; ++y) {
@@ -873,6 +925,8 @@ void Engine::draw(){
     drawImage->copyTo(cmd, m_swapchain->images.at(index));
     m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
+    drawDearImGui(cmd, m_swapchain->images.at(index).view);
+
 	vkEndCommandBuffer(cmd);
 
     VkCommandBufferSubmitInfo commandBufferSubmitInfo = {
@@ -1007,6 +1061,32 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     vkCmdEndRendering(cmd);
 }
 
+void Engine::drawDearImGui(VkCommandBuffer cmd, VkImageView view){
+    VkRenderingAttachmentInfo colorAttachment {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .pNext = nullptr,
+        .imageView = view,
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    };       
+    
+    VkRenderingInfo renderingInfo {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .pNext = nullptr,
+        .renderArea = VkRect2D { VkOffset2D { 0, 0 }, m_swapchain->extent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachment,
+    };
+
+    vkCmdBeginRendering(cmd, &renderingInfo);
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+
+    vkCmdEndRendering(cmd);
+}
+
 void Engine::run(){
     SDL_Event e;
     bool quit = false;
@@ -1014,6 +1094,7 @@ void Engine::run(){
         uint64_t currentTime = SDL_GetTicksNS() - initializationTime;
         deltaTime = (float)(currentTime - lastTime)/1e9f;
         while(SDL_PollEvent(&e) != 0){
+            ImGui_ImplSDL3_ProcessEvent(&e);
             switch (e.type)
             {
             case SDL_EVENT_QUIT:
@@ -1052,7 +1133,6 @@ void Engine::run(){
                         gravityRotation -= 15.0f * deltaTime;
                         glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(gravityRotation), glm::vec3(0.0f, 0.0f, 1.0f));
                         gravityForce = glm::vec3(rotationMatrix * glm::vec4(gravityForce, 1.0f));
-                        // gravityForce = glm::vec3(9.81f, 0.0f, 0.0f);
                         break;
                     }
                     case SDLK_2:
@@ -1060,7 +1140,6 @@ void Engine::run(){
                         gravityRotation += 15.0f * deltaTime;
                         glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(gravityRotation), glm::vec3(0.0f, 0.0f, 1.0f));
                         gravityForce = glm::vec3(rotationMatrix * glm::vec4(gravityForce, 1.0f));
-                        // gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
                         break;
                     }                    
                     case SDLK_3:
@@ -1068,16 +1147,17 @@ void Engine::run(){
                         gravityRotation += 15.0f * deltaTime;
                         glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(gravityRotation), glm::vec3(1.0f, 0.0f, 0.0f));
                         gravityForce = glm::vec3(rotationMatrix * glm::vec4(gravityForce, 1.0f));
-                        // gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
                         break;
                     }
                     case SDLK_R:
                     {
                         resetParticlePositions();
+                        break;
                     }
                     case SDLK_G:
                     {
                         randomizeParticlePositions();
+                        break;
                     }
 
                 }
@@ -1119,9 +1199,23 @@ void Engine::run(){
 
         //stopRendering
             //continue
-        
-        //future imgui stuff
-        //ImplVulkanNewFrame, ImpleSDL3NewFrame
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        if (ImGui::Begin("background")) {		
+			ImGui::Text("Parameters:");
+			ImGui::Text("gravRotation: %.6f", gravityRotation);
+			ImGui::InputFloat("radius", &smoothingRadius, 0.25f, 1.0f, "%.6f");
+			ImGui::InputFloat("restDensity", &restDensity, 100.0f, 1000.0f, "%.6f");
+			ImGui::InputFloat("epsilon", &epsilon, 0.00001f, 0.001f, "%.6f");
+			ImGui::InputFloat3("minPoint", (float*)&minBoundingPos);
+			ImGui::InputFloat3("maxPoint", (float*)&maxBoundingPos);
+		}
+		ImGui::End();
+
+        ImGui::Render();
+
         updateParticlePositions();
         updatePositionBuffer();
         draw();

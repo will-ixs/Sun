@@ -112,6 +112,23 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(fastgltf)
 
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp  # Optional
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
+)
+
+target_include_directories(imgui PRIVATE 
+    ${Vulkan_INCLUDE_DIRS}
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
+target_link_libraries(imgui PUBLIC SDL3::SDL3 Vulkan::Vulkan)
+
 # Create Executable
 add_executable(VulkanProject 
     src/main.cpp
@@ -130,8 +147,9 @@ target_include_directories(VulkanProject PRIVATE
     ${SDL3_INCLUDE_DIRS}
     ${glm_SOURCE_DIR}
     ${vkbootstrap_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}
     ${VulkanMemoryAllocator_SOURCE_DIR}/include
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
 )
 
 # Link Libraries
@@ -141,6 +159,7 @@ target_link_libraries(VulkanProject PRIVATE
     glm::glm
     vk-bootstrap::vk-bootstrap
     fastgltf::fastgltf
+    imgui
 )
 
 #message(STATUS "Vulkan Include Directory: ${Vulkan_INCLUDE_DIRS}")

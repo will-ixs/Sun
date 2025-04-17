@@ -18,7 +18,7 @@ class PipelineBuilder;
 class MeshUploader;
 class Camera;
 
-constexpr uint32_t sideLength = 15;
+constexpr uint32_t sideLength = 10;
 constexpr uint32_t instanceCount = sideLength * sideLength * sideLength;
 constexpr float particleMass = 10.0f;
 constexpr uint32_t solverIterations = 3;
@@ -36,6 +36,7 @@ private:
     void initDescriptors();
     void initPipelines();
     void initData();
+    void initDearImgui();
 
     //Util
     bool loadShader(VkShaderModule* outShader, const char* filePath);
@@ -49,6 +50,7 @@ private:
     //drawing
     void draw();
     void drawMeshes(VkCommandBuffer cmd);
+    void drawDearImGui(VkCommandBuffer cmd, VkImageView view);
 
     //Optons
     bool m_bUseValidation = false;
@@ -73,6 +75,7 @@ private:
     VkDescriptorPool m_descriptorPool;
     VkDescriptorSetLayout m_descriptorLayout;
     VkDescriptorSet m_descriptorSet;
+    VkDescriptorPool m_ImguiPool;
     
     const uint32_t STORAGE_BINDING = 0;
     const uint32_t SAMPLER_BINDING = 1;
@@ -107,6 +110,8 @@ private:
     uint64_t lastTime = 0;
     float deltaTime = 0;
 
+
+    //PBF
     glm::vec3 maxBoundingPos;
     glm::vec3 minBoundingPos;
     std::vector<ParticleData> particleInfo;
@@ -124,9 +129,9 @@ private:
     glm::vec3 gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
     float gravityRotation = 0.0f;
     
-    float smoothingRadius = 2.25f;
-    float restDensity = 1000.0f;
-    float epsilon = 1e-3f;
+    float smoothingRadius = 2.5f;
+    float restDensity = 10000.0f;
+    float epsilon = 1e-4f;
     float densityKernel(float r);
     float gradientKernel(float r);
     void resetPersistentParticleData();
