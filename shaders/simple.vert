@@ -44,6 +44,9 @@ void main()
 	vec3 finalPos = v.position + instancePosition.xyz;
 	gl_Position = PushConstants.render_matrix * vec4(finalPos, 1.0);
 	
+	// float velocity = length(storageBuffers[PushConstants.instanceBufferIndex].data[gl_InstanceIndex].velocity);
+	// velocity *= 0.1;
+	// outColor = vec3(0.2 + velocity, 0.2 + velocity, 1);
 	outColor = v.color.xyz;
 	outUV.x = v.uv_x;
 	outUV.y = v.uv_y;

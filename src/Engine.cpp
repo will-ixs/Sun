@@ -15,6 +15,7 @@
 #include <iostream>
 #include <fstream>
 #include <filesystem>
+#include <execution>
 #include <stdexcept>
 #include <random>
 
@@ -470,14 +471,20 @@ void Engine::initData(){
         throw std::runtime_error("Host position buffer not mapped.");
     }
 
-    maxBoundingPos = glm::vec3(10.0f, 15.0f, 10.0f);
-    minBoundingPos = glm::vec3(-10.0f, -15.0f, -10.0f);
+    maxBoundingPos = glm::vec3(45.0f, 0.0f, 0.0f);
+    minBoundingPos = glm::vec3(-45.0f, -15.0f, -60.0f);
 
     particleInfo.reserve(instanceCount);
+    cellStart.resize(tableSize);
+    tempCounts.resize(tableSize);
+    particleIndices.resize(instanceCount);
     positionDeltas.resize(instanceCount);
     particleCollisions.resize(instanceCount);
     particleLambdas.resize(instanceCount);
     particleNeighbors.resize(instanceCount);
+    particleVorticity.resize(instanceCount);
+    particleVorticityGradient.resize(instanceCount);
+    particleViscosityDelta.resize(instanceCount);
     glm::vec3 step = (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
 
     for (int x = 0; x < sideLength; ++x) {
@@ -744,6 +751,9 @@ void Engine::resetPersistentParticleData(){
     for(int i = 0; i < instanceCount; i++){
         positionDeltas.at(i) = glm::vec4(0.0f);
         particleCollisions.at(i) = glm::vec3(0.0f);
+        particleVorticity.at(i) = glm::vec3(0.0f);
+        particleVorticityGradient.at(i) = glm::vec3(0.0f);
+        particleViscosityDelta.at(i) = glm::vec3(0.0f);
         particleLambdas.at(i) = 0.0f;
         particleNeighbors.at(i).clear();
     }
@@ -798,16 +808,24 @@ void Engine::updateParticlePositions(){
         particleInfo.at(i).currPosition += (particleInfo.at(i).velocity * h);
     }
 
-    //Apply Constraints
-    for(int i = 0; i < particleInfo.size(); i++){
-        for (int j = 0; j < particleInfo.size(); j++) {
-            if (i == j) continue;
-            if (glm::length(particleInfo.at(i).currPosition - particleInfo.at(j).currPosition) < smoothingRadius) {
-                particleNeighbors[i].push_back(j);
-            }
-        }
-    }
 
+    buildGrid();
+
+    //Calculate neighbors
+    std::for_each(
+        std::execution::par_unseq,
+        particleInfo.begin(),
+        particleInfo.end(),
+        [&](const auto& particle) {
+            int i = &particle - &particleInfo[0]; // index
+            findNeighbors(i, particleNeighbors.at(i));
+        }
+    );
+    // for(int i = 0; i < particleInfo.size(); i++){
+    //    findNeighbors(i, particleNeighbors.at(i));
+    // }
+    
+    //Apply Constraints
     for (int s = 0; s < solverIterations; s++) {
         // Step 1: Calculate lambdas
         for (int i = 0; i < particleInfo.size(); i++) {
@@ -880,6 +898,56 @@ void Engine::updateParticlePositions(){
         particleInfo.at(i).velocity.x *= particleCollisions.at(i).x;
         particleInfo.at(i).velocity.y *= particleCollisions.at(i).y;
         particleInfo.at(i).velocity.z *= particleCollisions.at(i).z;
+    }
+
+    //Calculate vorticity
+    for(int i = 0; i < particleInfo.size(); i++){
+        glm::vec3 particle = glm::vec3(particleInfo[i].currPosition);
+        for (int j : particleNeighbors[i]) {
+            glm::vec3 neighbor = glm::vec3(particleInfo[j].currPosition);
+
+            glm::vec3 vij = particleInfo[i].velocity - particleInfo[j].velocity;
+            glm::vec3 grad = gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor);
+            
+            particleVorticity[i] += glm::cross(vij, grad);
+        } 
+    }
+
+    //Vorticity gradient
+    for(int i = 0; i < particleInfo.size(); i++){
+        glm::vec3 particle = glm::vec3(particleInfo[i].currPosition);
+        for (int j : particleNeighbors[i]) {
+            glm::vec3 neighbor = glm::vec3(particleInfo[j].currPosition);
+            float dist = glm::length(neighbor - particle);
+            if(dist > epsilon){
+                float diff = glm::length(particleVorticity.at(j)) - glm::length(particleVorticity.at(i));
+                particleVorticityGradient.at(i) += (diff / dist) * ((neighbor - particle) / (dist + epsilon));
+            }
+        
+        }
+        if (glm::length(particleVorticityGradient.at(i)) > epsilon){
+            particleVorticityGradient.at(i) = glm::normalize(particleVorticityGradient.at(i));
+        }
+        else{
+            particleVorticityGradient.at(i) = glm::vec3(0.0f);
+        }
+    }
+
+    //Apply vorticity force
+    for(int i = 0; i < particleInfo.size(); i++){
+        particleInfo.at(i).velocity += glm::vec4((h * (vorticityEpsilon * glm::cross(particleVorticityGradient.at(i), particleVorticity.at(i)))), 0.0f);
+    }
+
+    //Apply vorticity force
+    for(int i = 0; i < particleInfo.size(); i++){
+        glm::vec3 particle = glm::vec3(particleInfo[i].currPosition);
+        for (int j : particleNeighbors[i]) {
+            glm::vec3 neighbor = glm::vec3(particleInfo[j].currPosition);            
+            glm::vec3 vij = particleInfo[i].velocity - particleInfo[j].velocity;
+            float scaling = densityKernel(glm::length(particle - neighbor));
+            particleViscosityDelta.at(i) += scaling * vij;
+        }
+        particleInfo.at(i).velocity += glm::vec4(viscosity * particleViscosityDelta.at(i), 0.0f);
     }
 }
 //Drawing
@@ -1209,6 +1277,8 @@ void Engine::run(){
 			ImGui::InputFloat("radius", &smoothingRadius, 0.25f, 1.0f, "%.6f");
 			ImGui::InputFloat("restDensity", &restDensity, 100.0f, 1000.0f, "%.6f");
 			ImGui::InputFloat("epsilon", &epsilon, 0.00001f, 0.001f, "%.6f");
+			ImGui::InputFloat("vorticity", &vorticityEpsilon, 0.01f, 0.1f, "%.6f");
+			ImGui::InputFloat("viscosity", &viscosity, 0.0001f, 0.01f, "%.6f");
 			ImGui::InputFloat3("minPoint", (float*)&minBoundingPos);
 			ImGui::InputFloat3("maxPoint", (float*)&maxBoundingPos);
 		}
