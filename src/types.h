@@ -30,7 +30,17 @@ struct ImmediateTransfer{
 struct PushConstants{
     glm::mat4 worldMatrix;
     VkDeviceAddress vertexBuffer; 
-    uint32_t instanceIndex;
+    VkDeviceAddress particleBuffer;
+    glm::vec3 camWorldPos;
+};
+
+struct ComputePushConstants{
+    VkDeviceAddress particleBuffer;
+    VkDeviceAddress gridCounter;
+    VkDeviceAddress gridCells;
+    VkDeviceAddress sortedParticleIndices;
+    VkDeviceAddress cellStart;
+    float timestep;
 };
 
 struct Vertex {
@@ -61,9 +71,15 @@ struct MeshAsset {
 };
 
 struct ParticleData {
-    glm::vec4 currPosition;
-    glm::vec4 prevPosition;
-    glm::vec4 velocity;
+    glm::vec3 currPosition;
+    glm::vec3 prevPosition;
+    glm::vec3 velocity;    
+    glm::vec3 positionDeltas;
+    glm::vec3 particleCollisions;
+    glm::vec3 particleVorticity;
+    glm::vec3 particleVorticityGradient;
+    glm::vec3 particleViscosityDelta;
+    float particleLambdas;
 };
 
 #endif

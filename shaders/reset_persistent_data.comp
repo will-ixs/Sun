@@ -1,0 +1,46 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+
+#define NUM_PARTICLES 8000
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+const uint OFFSET_CURR_POS      	= 0;
+const uint OFFSET_PREV_POS      	= 3 * NUM_PARTICLES;
+const uint OFFSET_VELOCITY      	= 6 * NUM_PARTICLES;
+const uint OFFSET_DELTA         	= 9 * NUM_PARTICLES;
+const uint OFFSET_COLLISIONS    	= 12 * NUM_PARTICLES;
+const uint OFFSET_VORTICITY     	= 15 * NUM_PARTICLES;
+const uint OFFSET_VORTICITY_GRAD	= 18 * NUM_PARTICLES;
+const uint OFFSET_VISCOSITY     	= 21 * NUM_PARTICLES;
+const uint OFFSET_LAMBDAS       	= 24 * NUM_PARTICLES;
+
+layout(buffer_reference, std430) buffer ParticleBuffer{ 
+	float data[];
+};
+layout(buffer_reference, std430) buffer UintBuffer{ 
+	uint data[];
+};
+
+layout( push_constant ) uniform constants
+{	
+	ParticleBuffer particleBuffer;    
+    UintBuffer gridIndices;
+    UintBuffer particleIndices;
+    UintBuffer sortedParticleIndices;
+    IntBuffer cellStart;
+    float timestep;
+} PushConstants;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= NUM_PARTICLES) return;
+
+    vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
+    vec3 velocity = loadVec3(OFFSET_VELOCITY, index);
+
+    vec3 newPredictedPos = currPos + velocity * PushConstants.timestep;
+
+    storeVec3(OFFSET_PREV_POS, index, currPos);
+    storeVec3(OFFSET_CURR_POS, index, newPredictedPos);
+}

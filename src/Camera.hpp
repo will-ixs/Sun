@@ -26,9 +26,10 @@ public:
 
     glm::mat4 getRenderMatrix();
     glm::mat4 getOrthoRenderMatrix();
+    glm::vec3 getPosition() { return position; };
     void updateLook(float dx, float dy);
     void updateVelocity(glm::vec3 dp);
     void updatePosition(float deltaTime);
 };
 
-#endif
+#endif 

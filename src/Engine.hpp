@@ -21,7 +21,7 @@ class Camera;
 
 constexpr uint32_t sideLength = 20;
 constexpr uint32_t instanceCount = sideLength * sideLength * sideLength;
-constexpr float particleMass = 10.0f;
+constexpr float particleMass = 0.1f;
 constexpr uint32_t solverIterations = 3;
 
 class Engine
@@ -47,6 +47,7 @@ private:
 
     //Pipelines
     void initMeshPipeline();
+    void initComputePipeline();
 
     //drawing
     void draw();
@@ -88,6 +89,17 @@ private:
     //Pipelines
     VkPipelineLayout meshPipelineLayout;
     VkPipeline meshPipeline;
+
+    VkPipelineLayout computePipelineLayout;
+    VkPipeline computePredict;
+    VkPipeline computeScan;
+    VkPipeline computeNeighbors;
+    VkPipeline computeConstraint;
+    VkPipeline computeDeltas; //Dpi and Collision response 
+    VkPipeline computeVorticity;
+    VkPipeline computeVorticityGradient;
+    VkPipeline computeViscosity;
+
     std::unique_ptr<PipelineBuilder> pb;
 
     //Queue Info
@@ -113,101 +125,46 @@ private:
 
 
     //PBF
-    const uint32_t tableSize = 20011;
+    const int tableSize = 20011;
     const uint32_t PRIME1 = 19349663;
     const uint32_t PRIME2 = 73856093;
     const uint32_t PRIME3 = 83492791;
 
     std::vector<std::vector<int>> grid;
+    size_t hashGridCoord(int x, int y, int z);
+    void buildGrid();
+    void findNeighbors(int i, std::vector<int>& neighbors);
+    void buildCellStart();
     
-    size_t hashGridCoord(int x, int y, int z) {
-        return (x * PRIME1 ^ y * PRIME2 ^ z * PRIME3) % tableSize;
-    }
-    glm::ivec3 getGridCoord(const glm::vec3& pos) {
-        return glm::floor(pos / smoothingRadius);
-    }
-    void buildGrid() {
-        std::fill(tempCounts.begin(), tempCounts.end(), 0);
-        for (size_t i = 0; i < particleInfo.size(); i++) {
-            auto cell = glm::floor(particleInfo.at(i).currPosition / smoothingRadius);
-            size_t hash = hashGridCoord(cell.x, cell.y, cell.z);
-            tempCounts[hash]++;
-        }
-
-        cellStart[0] = 0;
-        for (int i = 1; i < tableSize; ++i){
-            cellStart[i] = cellStart[i - 1] + tempCounts[i - 1];
-        }
-
-        std::fill(tempCounts.begin(), tempCounts.end(), 0);
-        for (size_t i = 0; i < particleInfo.size(); i++) {
-            auto cell = glm::floor(particleInfo.at(i).currPosition / smoothingRadius);
-            size_t hash = hashGridCoord(cell.x, cell.y, cell.z);
-            int writeIndex = cellStart[hash] + tempCounts[hash]++;
-            particleIndices[writeIndex] = i;
-        }
-    }
-    void findNeighbors(int i, std::vector<int>& neighbors) {
-        glm::ivec3 base = glm::floor(particleInfo.at(i).currPosition / smoothingRadius);
-        float r2 = smoothingRadius * smoothingRadius;
-    
-        for (int dx = -1; dx <= 1; ++dx)
-        for (int dy = -1; dy <= 1; ++dy)
-        for (int dz = -1; dz <= 1; ++dz) {
-            glm::ivec3 neighborCell = base + glm::ivec3(dx, dy, dz);
-            size_t hash = hashGridCoord(neighborCell.x, neighborCell.y, neighborCell.z);
-    
-            // get start and end indices of this cell's range
-            int start = cellStart[hash];
-            int end = (hash + 1 < tableSize) ? cellStart[hash + 1] : particleIndices.size();
-    
-            for (int j = start; j < end; ++j) {
-                int neighborIdx = particleIndices[j];
-                if (neighborIdx == i) continue;
-                if (glm::length2(particleInfo.at(neighborIdx).currPosition - particleInfo.at(i).currPosition) < r2)
-                    neighbors.push_back(neighborIdx);
-            }
-        }
-    }
-
-    void countParticles() {
-        std::fill(tempCounts.begin(), tempCounts.end(), 0);
-    
-        for (size_t i = 0; i<particleInfo.size(); i++) {
-            glm::ivec3 cell = glm::floor(glm::vec3(particleInfo.at(i).currPosition) / smoothingRadius);
-            size_t hash = hashGridCoord(cell.x, cell.y, cell.z);
-            tempCounts[hash]++;
-        }
-    }
-    void buildCellStart() {
-        cellStart[0] = 0;
-        for (int i = 1; i < tableSize; ++i) {
-            cellStart[i] = cellStart[i - 1] + tempCounts[i - 1];
-        }
-    }
-
-    std::vector<int> cellStart;        // size = tableSize
-    std::vector<int> particleIndices;  // flat index list
-    std::vector<int> tempCounts;   
-
+    //GPU Data
+    VkDeviceAddress particleBufferAddress;
     glm::vec3 maxBoundingPos;
     glm::vec3 minBoundingPos;
-    std::vector<ParticleData> particleInfo;
-    // std::vector<glm::vec4> particleCurrPosition;
-    // std::vector<glm::vec4> particlePrevPosition;
-    // std::vector<glm::vec4> particleVelocity;
-    std::vector<glm::vec4> positionDeltas;
+
+    std::vector<uint32_t> gridCounters;     //tableSize - contains number of particles in each cell
+    std::vector<uint32_t> gridCells;        //tableSize * cellSize(10 if it gets weirdly compressed) - contains indices of particles in each cell
+    // std::vector<uint32_t> particleNeighbors //instanceCount * (cellSize * 27) -  
+    std::vector<int> cellStart;        // size = tableSize
+    std::vector<int> particleIndices;
+    std::vector<int> tempCounts;
+
+
+    std::vector<glm::vec3> particleCurrPosition;
+    std::vector<glm::vec3> particlePrevPosition;
+    std::vector<glm::vec3> particleVelocity;
+    std::vector<glm::vec3> positionDeltas;
     std::vector<glm::vec3> particleCollisions;
     std::vector<glm::vec3> particleVorticity;
     std::vector<glm::vec3> particleVorticityGradient;
     std::vector<glm::vec3> particleViscosityDelta;
     std::vector<float> particleLambdas;
 
-    
     std::vector<std::vector<int>> particleNeighbors;
 
     std::unique_ptr<Buffer> hostPositionBuffer;
     std::unique_ptr<Buffer> devicePositionBuffer;
+    std::unique_ptr<Buffer> deviceGridCounters;
+    std::unique_ptr<Buffer> deviceGridCells;
     void updatePositionBuffer();
     void updateParticlePositions();
     glm::vec3 clampDeltaToBounds(uint32_t index);
