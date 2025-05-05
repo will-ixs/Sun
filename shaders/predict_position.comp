@@ -52,7 +52,7 @@ void main() {
 
     vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
     vec3 velocity = loadVec3(OFFSET_VELOCITY, index);
-    velocity += (timestep / PushConstants.particleMass) * (PushConstants.particleMass * vec3(0.0, -9.81, 0.0));
+    velocity += (PushConstants.timestep / PushConstants.particleMass) * (PushConstants.particleMass * vec3(0.0, -9.81, 0.0));
     vec3 predictPos = currPos + velocity * PushConstants.timestep;
 
     storeVec3(OFFSET_PREV_POS, index, currPos);

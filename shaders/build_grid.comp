@@ -1,5 +1,6 @@
 #version 450
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_atomic_float: require
 
 #define NUM_PARTICLES 64000
 #define TABLE_SIZE 129631 
@@ -65,8 +66,8 @@ void main() {
     if (index >= NUM_PARTICLES) return;
 
     vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
-    ivec3 cellPos = floor(currPos/smoothingRadius);
+    ivec3 cellPos = ivec3(floor(currPos.x/PushConstants.smoothingRadius), floor(currPos.y/PushConstants.smoothingRadius), floor(currPos.z/PushConstants.smoothingRadius));
     uint cellHash = hashGridCoord(cellPos.x, cellPos.y, cellPos.z);
-    uint cellGridIndex = atomicAdd(gridCounter.data[cellHash], 1);
-    gridCells.data[(10 * cellHash) + cellGridIndex] = index;
+    uint cellGridIndex = atomicAdd(PushConstants.gridCounter.data[cellHash], 1);
+    PushConstants.gridCells.data[(10 * cellHash) + cellGridIndex] = index;
 }

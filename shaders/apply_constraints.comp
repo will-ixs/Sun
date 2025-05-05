@@ -70,12 +70,12 @@ uint hashGridCoord(int x, int y, int z) {
     return hash % TABLE_SIZE;
 }
 float densityKernel(float r){
-    float factor = 315.0 / (64.0 * M_PI * pow(smoothingRadius, 9.0));
-    return factor * pow((smoothingRadius * smoothingRadius) - (r * r), 3.0);
+    float factor = 315.0 / (64.0 * M_PI * pow(PushConstants.smoothingRadius, 9.0));
+    return factor * pow((PushConstants.smoothingRadius * PushConstants.smoothingRadius) - (r * r), 3.0);
 }
 float gradientKernel(float r){
-    float factor = (45.0 / M_PI) * pow(smoothingRadius, 6.0);
-    return factor * pow((smoothingRadius - r), 2.0);
+    float factor = (45.0 / M_PI) * pow(PushConstants.smoothingRadius, 6.0);
+    return factor * pow((PushConstants.smoothingRadius - r), 2.0);
 }
 
 void main() {
@@ -83,26 +83,26 @@ void main() {
     if (index >= NUM_PARTICLES) return;
 
     vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
-    ivec3 cellPos = floor(currPos/smoothingRadius);
+    ivec3 cellPos = ivec3(floor(currPos.x/PushConstants.smoothingRadius), floor(currPos.y/PushConstants.smoothingRadius), floor(currPos.z/PushConstants.smoothingRadius));
     //Calculate lambdas
             
     // Compute density
     float density = 0.0;
-    for(int dx = -1; dx<=1; dx++;){
-    for(int dy = -1; dy<=1; dy++;){
-    for(int dz = -1; dz<=1; dz++;){
+    for(int dx = -1; dx<=1; dx++){
+    for(int dy = -1; dy<=1; dy++){
+    for(int dz = -1; dz<=1; dz++){
 
         ivec3 neighborCell = cellPos + ivec3(dx, dy, dz);
         uint cellHash = hashGridCoord(neighborCell.x, neighborCell.y, neighborCell.z);
-        uint cellCount = gridCounter.data[cellHash];
+        uint cellCount = PushConstants.gridCounter.data[cellHash];
         for(int i = 0; i < cellCount; i++){
-            uint particleIndex = gridCells.data[(10 * cellHash) + i];            
+            uint particleIndex = PushConstants.gridCells.data[(10 * cellHash) + i];            
             if(particleIndex == index){
                 continue;
             }
             vec3 neighborPos = loadVec3(OFFSET_CURR_POS, particleIndex);
             float r = length(neighborPos - currPos);
-            if(r < smoothingRadius){
+            if(r < PushConstants.smoothingRadius){
                 density += densityKernel(r);
             }
         }
@@ -115,45 +115,44 @@ void main() {
     float gradSum = 0.0;
     vec3 gradAccum = vec3(0.0);
 
-    for(int dx = -1; dx<=1; dx++;){
-    for(int dy = -1; dy<=1; dy++;){
-    for(int dz = -1; dz<=1; dz++;){
+    for(int dx = -1; dx<=1; dx++){
+    for(int dy = -1; dy<=1; dy++){
+    for(int dz = -1; dz<=1; dz++){
         ivec3 neighborCell = cellPos + ivec3(dx, dy, dz);
         uint cellHash = hashGridCoord(neighborCell.x, neighborCell.y, neighborCell.z);
-        uint cellCount = gridCounter.data[cellHash];
+        uint cellCount = PushConstants.gridCounter.data[cellHash];
         for(int i = 0; i < cellCount; i++){
-            uint particleIndex = gridCells.data[(10 * cellHash) + i];
+            uint particleIndex = PushConstants.gridCells.data[(10 * cellHash) + i];
             if(particleIndex == index){
                 continue;
             }
             vec3 neighborPos = loadVec3(OFFSET_CURR_POS, particleIndex);
-            vec3 grad = (gradientKernel(length(currPos - neighbor)) * normalize(currPos - neighbor)) / restDensity;
+            vec3 grad = (gradientKernel(length(currPos - neighborPos)) * normalize(currPos - neighborPos)) / PushConstants.restDensity;
             gradSum += dot(grad, grad);
             gradAccum += grad;
-            }
         }
     }
     }
     }
-    gradSum += dot(-grad_i, -grad_i);
-    float lambda = -Ci / (gradSum + epsilon);
+    gradSum += dot(-gradAccum, -gradAccum);
+    float lambda = -Ci / (gradSum + 0.0001);
     storeFloat(OFFSET_LAMBDAS, index, lambda);
 
     //Calculate Dpi
     vec3 delta = vec3(0.0);
-    for(int dx = -1; dx<=1; dx++;){
-    for(int dy = -1; dy<=1; dy++;){
-    for(int dz = -1; dz<=1; dz++;){
+    for(int dx = -1; dx<=1; dx++){
+    for(int dy = -1; dy<=1; dy++){
+    for(int dz = -1; dz<=1; dz++){
         ivec3 neighborCell = cellPos + ivec3(dx, dy, dz);
         uint cellHash = hashGridCoord(neighborCell.x, neighborCell.y, neighborCell.z);
-        uint cellCount = gridCounter.data[cellHash];
+        uint cellCount = PushConstants.gridCounter.data[cellHash];
         for(int i = 0; i < cellCount; i++){
-            uint particleIndex = gridCells.data[(10 * cellHash) + i];
+            uint particleIndex = PushConstants.gridCells.data[(10 * cellHash) + i];
             if(particleIndex == index){
                 continue;
             }
             vec3 neighborPos = loadVec3(OFFSET_CURR_POS, particleIndex);
-            vec3 grad = gradientKernel(length(currPos - neighbor)) * normalize(currPos - neighbor);
+            vec3 grad = gradientKernel(length(currPos - neighborPos)) * normalize(currPos - neighborPos);
             delta += (loadFloat(OFFSET_LAMBDAS, index) + loadFloat(OFFSET_LAMBDAS, particleIndex)) * grad;
         }
     }
@@ -169,34 +168,34 @@ void main() {
     vec3 collision = vec3(1.0);
     float radius = 0.1;
 
-    if(newPos.x - radius < minBoundingPos.x){
-        delta.x = minBoundingPos.x + radius - currPos.x;
+    if(newPos.x - radius < PushConstants.minBoundingPos.x){
+        delta.x = PushConstants.minBoundingPos.x + radius - currPos.x;
         collision.x *= -1.0;
-    }else if (newPos.x + radius > maxBoundingPos.x){
-        delta.x = maxBoundingPos.x - radius - currPos.x;
+    }else if (newPos.x + radius > PushConstants.maxBoundingPos.x){
+        delta.x = PushConstants.maxBoundingPos.x - radius - currPos.x;
         collision.x *= -1.0;
     }     
     
-    if(newPos.y - radius < minBoundingPos.y){
-        delta.y = minBoundingPos.y + radius - currPos.y;
+    if(newPos.y - radius < PushConstants.minBoundingPos.y){
+        delta.y = PushConstants.minBoundingPos.y + radius - currPos.y;
         collision.y *= -1.0;
-    }else if (newPos.y + radius > mayBoundingPos.y){
-        delta.y = mayBoundingPos.y - radius - currPos.y;
+    }else if (newPos.y + radius > PushConstants.maxBoundingPos.y){
+        delta.y = PushConstants.maxBoundingPos.y - radius - currPos.y;
         collision.y *= -1.0;
     }     
     
-    if(newPos.z - radius < minBoundingPos.z){
-        delta.z = minBoundingPos.z + radius - currPos.z;
+    if(newPos.z - radius < PushConstants.minBoundingPos.z){
+        delta.z = PushConstants.minBoundingPos.z + radius - currPos.z;
         collision.z *= -1.0;
-    }else if (newPos.z + radius > mazBoundingPos.z){
-        delta.z = mazBoundingPos.z - radius - currPos.z;
+    }else if (newPos.z + radius > PushConstants.maxBoundingPos.z){
+        delta.z = PushConstants.maxBoundingPos.z - radius - currPos.z;
         collision.z *= -1.0;
     }
 
     currPos += delta;
     vec3 vel = loadVec3(OFFSET_VELOCITY, index);
-    vec3 prevPos = loadVec(OFFSET_PREV_POS, index);
-    vel = (1.0/timestep) * (currPos - prevPos);
+    vec3 prevPos = loadVec3(OFFSET_PREV_POS, index);
+    vel = (1.0 / PushConstants.timestep) * (currPos - prevPos);
     vel.x *= collision.x;
     vel.y *= collision.y;
     vel.z *= collision.z;

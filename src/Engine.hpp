@@ -19,7 +19,7 @@ class PipelineBuilder;
 class MeshUploader;
 class Camera;
 
-constexpr uint32_t sideLength = 40;
+constexpr uint32_t sideLength = 30;
 constexpr uint32_t instanceCount = sideLength * sideLength * sideLength;
 constexpr float particleMass = 0.1f;
 constexpr uint32_t solverIterations = 3;
@@ -92,13 +92,10 @@ private:
 
     VkPipelineLayout computePipelineLayout;
     VkPipeline computePredict;
-    VkPipeline computeScan;
-    VkPipeline computeNeighbors;
-    VkPipeline computeConstraint;
-    VkPipeline computeDeltas; //Dpi and Collision response 
-    VkPipeline computeVorticity;
-    VkPipeline computeVorticityGradient;
-    VkPipeline computeViscosity;
+    VkPipeline computeGrid;
+    VkPipeline computeConstraints;
+    VkPipeline computeResetGrid;
+    VkPipeline computeResetParticles;
 
     std::unique_ptr<PipelineBuilder> pb;
 
