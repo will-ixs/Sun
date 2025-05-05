@@ -28,6 +28,9 @@ layout( push_constant ) uniform constants
     UintBuffer gridCounter;
     UintBuffer gridCells;
     float timestep;
+    float smoothingRadius;
+    float restDensity;
+    float particleMass;
 } PushConstants;
 
 void storeVec3(uint baseOffset, uint index, vec3 value) {

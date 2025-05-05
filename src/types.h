@@ -39,6 +39,11 @@ struct ComputePushConstants{
     VkDeviceAddress gridCounter;
     VkDeviceAddress gridCells;
     float timestep;
+    float smoothingRadius;
+    float restDensity;
+    float particleMass;
+    glm::vec3 minBoundingPos;
+    glm::vec3 maxBoundingPos;
 };
 
 struct Vertex {

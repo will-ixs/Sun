@@ -19,7 +19,7 @@ class PipelineBuilder;
 class MeshUploader;
 class Camera;
 
-constexpr uint32_t sideLength = 30;
+constexpr uint32_t sideLength = 40;
 constexpr uint32_t instanceCount = sideLength * sideLength * sideLength;
 constexpr float particleMass = 0.1f;
 constexpr uint32_t solverIterations = 3;
@@ -125,7 +125,7 @@ private:
 
 
     //PBF
-    const int tableSize = 20011;
+    const int tableSize = 129631;
     const uint32_t PRIME1 = 19349663;
     const uint32_t PRIME2 = 73856093;
     const uint32_t PRIME3 = 83492791;

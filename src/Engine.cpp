@@ -528,7 +528,7 @@ void Engine::initData(){
     }
 
     maxBoundingPos = glm::vec3(45.0f, 0.0f, 0.0f);
-    minBoundingPos = glm::vec3(-45.0f, -15.0f, -60.0f);
+    minBoundingPos = glm::vec3(-45.0f, -25.0f, -120.0f);
 
     cellStart.resize(tableSize);
     tempCounts.resize(tableSize);
@@ -1021,125 +1021,71 @@ void Engine::updateParticlePositions(){
             }
         );
     }
-    // for (int s = 0; s < solverIterations; s++) {
-    //     // Step 1: Calculate lambdas
-        
-    //     for (int i = 0; i < particleCurrPosition.size(); i++) {
-    //         glm::vec3 particle = particleCurrPosition.at(i);
-            
-    //         // Compute density
-    //         float density = 0.0f;
 
-    //         for (int j : particleNeighbors[i]) {
-    //             glm::vec3 neighbor = particleCurrPosition.at(j);
+    std::for_each(
+        std::execution::par_unseq,
+        particleCurrPosition.begin(),
+        particleCurrPosition.end(),
+        [&](const auto& p) {
+            int i = &p - &particleCurrPosition[0]; // index
+            glm::vec3 particle = particleCurrPosition.at(i);
+            for (int j : particleNeighbors[i]) {
+                glm::vec3 neighbor = particleCurrPosition.at(j);
 
-    //             float r = glm::length(particle - neighbor);
-    //             if (r * r < (smoothingRadius * smoothingRadius)){
-    //                 density += densityKernel(r);
-    //             }
-    //         }
-    
-    //         float Ci = (density / restDensity) - 1.0f;
-    
-    //         // Compute ∑ |∇C_i|²
-    //         float gradSum = 0.0f;
-    //         glm::vec3 grad_i(0.0f);
-
-    //         for (int j : particleNeighbors[i]) {
-    //             glm::vec3 neighbor = particleCurrPosition.at(j);
-
-    //             glm::vec3 grad = (gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor)) / restDensity;
+                glm::vec3 vij = particleVelocity.at(i) - particleVelocity.at(j);
+                glm::vec3 grad = gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor);
                 
-    //             gradSum += glm::dot(grad, grad);
-    //             grad_i += grad;
-    //         }
-
-    //         grad_i = -grad_i;
-    //         gradSum += glm::dot(grad_i, grad_i); // include self term
-    
-    //         particleLambdas.at(i) = -Ci / (gradSum + epsilon);
-    //     }
-
-    //     //Reset deltas
-    //     // for(int i = 0; i < instanceCount; i++){
-    //         // positionDeltas.at(i) = glm::vec3(0.0f);
-    //     // }
-
-    //     //Calculate dpi
-    //     //Collision response
-    //     for(int i = 0; i < particleCurrPosition.size(); i++){
-    //         glm::vec3 particle = particleCurrPosition.at(i);
-    //         glm::vec3 delta(0.0f);
-    //         for (int j : particleNeighbors[i]) {
-    //             glm::vec3 neighbor = particleCurrPosition.at(j);
-
-    //             glm::vec3 grad = gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor);
-                
-    //             delta += (particleLambdas.at(i) + particleLambdas.at(j)) * grad;
-    //         }
-    //         delta /= restDensity;
-    //         positionDeltas.at(i) = delta;
-    //         particleCollisions.at(i) = clampDeltaToBounds(i);
-    //         //Apply dpi
-    //         particleCurrPosition.at(i) += positionDeltas.at(i);
-    //         //Set velocity, bounce 
-    //         particleVelocity.at(i) = (1/h) * (particleCurrPosition.at(i) - particlePrevPosition.at(i));
-    //         particleVelocity.at(i).x *= particleCollisions.at(i).x;
-    //         particleVelocity.at(i).y *= particleCollisions.at(i).y;
-    //         particleVelocity.at(i).z *= particleCollisions.at(i).z;
-    //     }
-    // }
-
-    //Calculate vorticity
-    for(int i = 0; i < particleCurrPosition.size(); i++){
-        glm::vec3 particle = particleCurrPosition.at(i);
-        for (int j : particleNeighbors[i]) {
-            glm::vec3 neighbor = particleCurrPosition.at(j);
-
-            glm::vec3 vij = particleVelocity.at(i) - particleVelocity.at(j);
-            glm::vec3 grad = gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor);
-            
-            particleVorticity[i] += glm::cross(vij, grad);
-        } 
-    }
+                particleVorticity[i] += glm::cross(vij, grad);
+            } 
+        }
+    );
 
     //Vorticity gradient
-    for(int i = 0; i < particleCurrPosition.size(); i++){
-        glm::vec3 particle = glm::vec3(particleCurrPosition.at(i));
-        for (int j : particleNeighbors[i]) {
-            glm::vec3 neighbor = glm::vec3(particleCurrPosition.at(j));
-            float dist = glm::length(neighbor - particle);
-            if(dist > epsilon){
-                float diff = glm::length(particleVorticity.at(j)) - glm::length(particleVorticity.at(i));
-                particleVorticityGradient.at(i) += (diff / dist) * ((neighbor - particle) / (dist + epsilon));
+    std::for_each(
+        std::execution::par_unseq,
+        particleCurrPosition.begin(),
+        particleCurrPosition.end(),
+        [&](const auto& p) {
+            int i = &p - &particleCurrPosition[0]; // index
+            glm::vec3 particle = particleCurrPosition.at(i);
+            for (int j : particleNeighbors[i]) {
+                glm::vec3 neighbor = particleCurrPosition.at(j);
+                float dist = glm::length(neighbor - particle);
+                if(dist > epsilon){
+                    float diff = glm::length(particleVorticity.at(j)) - glm::length(particleVorticity.at(i));
+                    particleVorticityGradient.at(i) += (diff / dist) * ((neighbor - particle) / (dist + epsilon));
+                }
+            
             }
-        
+            if (glm::length(particleVorticityGradient.at(i)) > epsilon){
+                particleVorticityGradient.at(i) = glm::normalize(particleVorticityGradient.at(i));
+            }
+            else{
+                particleVorticityGradient.at(i) = glm::vec3(0.0f);
+            }
+            
+            //Apply vorticity force
+            particleVelocity.at(i) += (h * (vorticityEpsilon * glm::cross(particleVorticityGradient.at(i), particleVorticity.at(i))));
         }
-        if (glm::length(particleVorticityGradient.at(i)) > epsilon){
-            particleVorticityGradient.at(i) = glm::normalize(particleVorticityGradient.at(i));
-        }
-        else{
-            particleVorticityGradient.at(i) = glm::vec3(0.0f);
-        }
-
-        //Apply vorticity force
-        particleVelocity.at(i) += (h * (vorticityEpsilon * glm::cross(particleVorticityGradient.at(i), particleVorticity.at(i))));
-    }
-
-    // for(int i = 0; i < particleCurrPosition.size(); i++){
-    // }
-
+    );
+    
     //Apply viscosity force
-    for(int i = 0; i < particleCurrPosition.size(); i++){
-        glm::vec3 particle = particleCurrPosition.at(i);
-        for (int j : particleNeighbors[i]) {
-            glm::vec3 neighbor = particleCurrPosition.at(j);            
-            glm::vec3 vij = particleVelocity.at(i) - particleVelocity.at(j);
-            float scaling = densityKernel(glm::length(particle - neighbor));
-            particleViscosityDelta.at(i) += scaling * vij;
+    std::for_each(
+        std::execution::par_unseq,
+        particleCurrPosition.begin(),
+        particleCurrPosition.end(),
+        [&](const auto& p) {
+            int i = &p - &particleCurrPosition[0]; // index
+            glm::vec3 particle = particleCurrPosition.at(i);
+            for (int j : particleNeighbors[i]) {
+                glm::vec3 neighbor = particleCurrPosition.at(j);            
+                glm::vec3 vij = particleVelocity.at(i) - particleVelocity.at(j);
+                float scaling = densityKernel(glm::length(particle - neighbor));
+                particleViscosityDelta.at(i) += scaling * vij;
+            }
+            particleVelocity.at(i) += viscosity * particleViscosityDelta.at(i);
         }
-        particleVelocity.at(i) += viscosity * particleViscosityDelta.at(i);
-    }
+    );
 }
 
 void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
@@ -1149,10 +1095,15 @@ void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
         cpcs.gridCounter = gridCountBufferAddress;
         cpcs.gridCells = gridCellsBufferAddress;
         cpcs.timestep = h;
+        cpcs.smoothingRadius = smoothingRadius;
+        cpcs.restDensity = restDensity;
+        cpcs.particleMass = particleMass;
+        cpcs.minBoundingPos = minBoundingPos;
+        cpcs.maxBoundingPos = maxBoundingPos;
         
         //Dispatch predict position
         //Dispatch reset persistent data
-        //Dispat reset grid
+        //Dispatch reset grid
         //memory barrier
         
         //Dispatch build grid
