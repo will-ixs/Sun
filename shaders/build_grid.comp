@@ -30,28 +30,8 @@ layout( push_constant ) uniform constants
     float timestep;
 } PushConstants;
 
-vec3 loadVec3(uint baseOffset, uint index){
-    return vec3(
-        PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0],
-        PushConstants.particleBuffer.data[baseOffset + (3 * index) + 1],
-        PushConstants.particleBuffer.data[baseOffset + (3 * index) + 2]
-    );
-}
-void storeVec3(uint baseOffset, uint index, vec3 value) {
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.x;
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.y;
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.z;
-}
-
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= NUM_PARTICLES) return;
 
-    vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
-    vec3 velocity = loadVec3(OFFSET_VELOCITY, index);
-
-    vec3 newPredictedPos = currPos + velocity * PushConstants.timestep;
-
-    storeVec3(OFFSET_PREV_POS, index, currPos);
-    storeVec3(OFFSET_CURR_POS, index, newPredictedPos);
 }

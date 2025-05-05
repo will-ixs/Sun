@@ -925,37 +925,8 @@ void Engine::buildCellStart() {
     }
 }
 
-void Engine::updateParticlePositions(){
-    
-    resetPersistentParticleData();
-    float h = deltaTime;
-
-    //Unconstrained Step (Position Prediction)
-    for(int i = 0; i < particleCurrPosition.size(); i++){
-        particlePrevPosition.at(i) = particleCurrPosition.at(i);
-        particleVelocity.at(i) += (h / particleMass) * (particleMass * gravityForce); //- damping * velocity)
-        particleCurrPosition.at(i) += (particleVelocity.at(i) * h);
-    }
-    //Dispatch predict position
-    //Build Grid
-    buildGrid();
-
-    //Calculate neighbors
-    std::for_each(
-        std::execution::par_unseq,
-        particleCurrPosition.begin(),
-        particleCurrPosition.end(),
-        [&](const auto& particle) {
-            int i = &particle - &particleCurrPosition[0]; // index
-            findNeighbors(i, particleNeighbors.at(i));
-        }
-    );
-    
-    //Apply Constraints
-    for (int s = 0; s < solverIterations; s++) {
-        // Step 1: Calculate lambdas
-        for (int i = 0; i < particleCurrPosition.size(); i++) {
-            glm::vec3 particle = particleCurrPosition.at(i);
+void Engine::calculateLambdas(int i){
+    glm::vec3 particle = particleCurrPosition.at(i);
             
             // Compute density
             float density = 0.0f;
@@ -988,42 +959,135 @@ void Engine::updateParticlePositions(){
             gradSum += glm::dot(grad_i, grad_i); // include self term
     
             particleLambdas.at(i) = -Ci / (gradSum + epsilon);
-        }
+}
 
-        //Reset deltas
-        // for(int i = 0; i < instanceCount; i++){
-            // positionDeltas.at(i) = glm::vec3(0.0f);
-        // }
+void Engine::calculateDpiCollision(int i, float h){
+    glm::vec3 particle = particleCurrPosition.at(i);
+    glm::vec3 delta(0.0f);
+    for (int j : particleNeighbors[i]) {
+        glm::vec3 neighbor = particleCurrPosition.at(j);
 
-        //Calculate dpi
-        //Collision response
-        for(int i = 0; i < particleCurrPosition.size(); i++){
-            glm::vec3 particle = particleCurrPosition.at(i);
-            glm::vec3 delta(0.0f);
-            for (int j : particleNeighbors[i]) {
-                glm::vec3 neighbor = particleCurrPosition.at(j);
-
-                glm::vec3 grad = gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor);
-                
-                delta += (particleLambdas.at(i) + particleLambdas.at(j)) * grad;
-            }
-            delta /= restDensity;
-            positionDeltas.at(i) = delta;
-            particleCollisions.at(i) = clampDeltaToBounds(i);
-            //Apply dpi
-            particleCurrPosition.at(i) += positionDeltas.at(i);
-            //Set velocity, bounce 
-            particleVelocity.at(i) = (1/h) * (particleCurrPosition.at(i) - particlePrevPosition.at(i));
-            particleVelocity.at(i).x *= particleCollisions.at(i).x;
-            particleVelocity.at(i).y *= particleCollisions.at(i).y;
-            particleVelocity.at(i).z *= particleCollisions.at(i).z;
-        }
-
-        // for(int i = 0; i < particleCurrPosition.size(); i++){
-        // }
+        glm::vec3 grad = gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor);
+        
+        delta += (particleLambdas.at(i) + particleLambdas.at(j)) * grad;
     }
+    delta /= restDensity;
+    positionDeltas.at(i) = delta;
+    particleCollisions.at(i) = clampDeltaToBounds(i);
+    //Apply dpi
+    particleCurrPosition.at(i) += positionDeltas.at(i);
+    //Set velocity, bounce 
+    particleVelocity.at(i) = (1/h) * (particleCurrPosition.at(i) - particlePrevPosition.at(i));
+    particleVelocity.at(i).x *= particleCollisions.at(i).x;
+    particleVelocity.at(i).y *= particleCollisions.at(i).y;
+    particleVelocity.at(i).z *= particleCollisions.at(i).z;
+}
 
-    // for(int i = 0; i < particleCurrPosition.size(); i++){
+void Engine::updateParticlePositions(){
+    //Dispatch reset persistent data
+    resetPersistentParticleData();
+    float h = deltaTime;
+
+    //Dispatch predict position
+    //Unconstrained Step (Position Prediction)
+    for(int i = 0; i < particleCurrPosition.size(); i++){
+        particlePrevPosition.at(i) = particleCurrPosition.at(i);
+        particleVelocity.at(i) += (h / particleMass) * (particleMass * gravityForce); //- damping * velocity)
+        particleCurrPosition.at(i) += (particleVelocity.at(i) * h);
+    }
+    //Build Grid
+    buildGrid();
+    //Calculate neighbors
+    std::for_each(
+        std::execution::par_unseq,
+        particleCurrPosition.begin(),
+        particleCurrPosition.end(),
+        [&](const auto& particle) {
+            int i = &particle - &particleCurrPosition[0]; // index
+            findNeighbors(i, particleNeighbors.at(i));
+        }
+    );
+    
+    //Apply Constraints
+    for(int s = 0; s < solverIterations; s++){
+        std::for_each(
+            std::execution::par_unseq,
+            particleCurrPosition.begin(),
+            particleCurrPosition.end(),
+            [&](const auto& particle) {
+                int i = &particle - &particleCurrPosition[0]; // index
+                calculateLambdas(i);
+                calculateDpiCollision(i, h);
+            }
+        );
+    }
+    // for (int s = 0; s < solverIterations; s++) {
+    //     // Step 1: Calculate lambdas
+        
+    //     for (int i = 0; i < particleCurrPosition.size(); i++) {
+    //         glm::vec3 particle = particleCurrPosition.at(i);
+            
+    //         // Compute density
+    //         float density = 0.0f;
+
+    //         for (int j : particleNeighbors[i]) {
+    //             glm::vec3 neighbor = particleCurrPosition.at(j);
+
+    //             float r = glm::length(particle - neighbor);
+    //             if (r * r < (smoothingRadius * smoothingRadius)){
+    //                 density += densityKernel(r);
+    //             }
+    //         }
+    
+    //         float Ci = (density / restDensity) - 1.0f;
+    
+    //         // Compute ∑ |∇C_i|²
+    //         float gradSum = 0.0f;
+    //         glm::vec3 grad_i(0.0f);
+
+    //         for (int j : particleNeighbors[i]) {
+    //             glm::vec3 neighbor = particleCurrPosition.at(j);
+
+    //             glm::vec3 grad = (gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor)) / restDensity;
+                
+    //             gradSum += glm::dot(grad, grad);
+    //             grad_i += grad;
+    //         }
+
+    //         grad_i = -grad_i;
+    //         gradSum += glm::dot(grad_i, grad_i); // include self term
+    
+    //         particleLambdas.at(i) = -Ci / (gradSum + epsilon);
+    //     }
+
+    //     //Reset deltas
+    //     // for(int i = 0; i < instanceCount; i++){
+    //         // positionDeltas.at(i) = glm::vec3(0.0f);
+    //     // }
+
+    //     //Calculate dpi
+    //     //Collision response
+    //     for(int i = 0; i < particleCurrPosition.size(); i++){
+    //         glm::vec3 particle = particleCurrPosition.at(i);
+    //         glm::vec3 delta(0.0f);
+    //         for (int j : particleNeighbors[i]) {
+    //             glm::vec3 neighbor = particleCurrPosition.at(j);
+
+    //             glm::vec3 grad = gradientKernel(glm::length(particle - neighbor)) * glm::normalize(particle - neighbor);
+                
+    //             delta += (particleLambdas.at(i) + particleLambdas.at(j)) * grad;
+    //         }
+    //         delta /= restDensity;
+    //         positionDeltas.at(i) = delta;
+    //         particleCollisions.at(i) = clampDeltaToBounds(i);
+    //         //Apply dpi
+    //         particleCurrPosition.at(i) += positionDeltas.at(i);
+    //         //Set velocity, bounce 
+    //         particleVelocity.at(i) = (1/h) * (particleCurrPosition.at(i) - particlePrevPosition.at(i));
+    //         particleVelocity.at(i).x *= particleCollisions.at(i).x;
+    //         particleVelocity.at(i).y *= particleCollisions.at(i).y;
+    //         particleVelocity.at(i).z *= particleCollisions.at(i).z;
+    //     }
     // }
 
     //Calculate vorticity
@@ -1077,6 +1141,38 @@ void Engine::updateParticlePositions(){
         particleVelocity.at(i) += viscosity * particleViscosityDelta.at(i);
     }
 }
+
+void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
+        float h = deltaTime;
+        ComputePushConstants cpcs;
+        cpcs.particleBuffer = particleBufferAddress;
+        cpcs.gridCounter = gridCountBufferAddress;
+        cpcs.gridCells = gridCellsBufferAddress;
+        cpcs.timestep = h;
+        
+        //Dispatch predict position
+        //Dispatch reset persistent data
+        //Dispat reset grid
+        //memory barrier
+        
+        //Dispatch build grid
+        //memory barrier
+
+        //Dispatch constraint solver
+        //Memory barrier
+    
+
+        //BONUS
+        //Dispatch calculate vorticity
+        //memory barrier
+        
+        //Dispatch calculate vorticity gradient
+        //memory barrier
+
+        //Dispatch apply viscosity force
+        //Memory barrier
+}
+
 //Drawing
 void Engine::draw(){
     VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, VK_TRUE, 1000000000);
@@ -1112,6 +1208,7 @@ void Engine::draw(){
  	drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     depthImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
+    // gpuUpdateParticlePositions(cmd);
     //Draw
     drawMeshes(cmd);
 

@@ -25,22 +25,25 @@ layout(buffer_reference, std430) buffer UintBuffer{
 layout( push_constant ) uniform constants
 {	
 	ParticleBuffer particleBuffer;    
-    UintBuffer gridIndices;
-    UintBuffer particleIndices;
-    UintBuffer sortedParticleIndices;
-    IntBuffer cellStart;
+    UintBuffer gridCounter;
+    UintBuffer gridCells;
     float timestep;
 } PushConstants;
+
+void storeVec3(uint baseOffset, uint index, vec3 value) {
+    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.x;
+    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.y;
+    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.z;
+}
 
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= NUM_PARTICLES) return;
 
-    vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
-    vec3 velocity = loadVec3(OFFSET_VELOCITY, index);
-
-    vec3 newPredictedPos = currPos + velocity * PushConstants.timestep;
-
-    storeVec3(OFFSET_PREV_POS, index, currPos);
-    storeVec3(OFFSET_CURR_POS, index, newPredictedPos);
+    vec3 zero = vec3(0.0, 0.0, 0.0);
+    storeVec3(OFFSET_DELTA,             index, zero);
+    storeVec3(OFFSET_COLLISIONS,        index, zero);
+    storeVec3(OFFSET_VORTICITY,         index, zero);
+    storeVec3(OFFSET_VORTICITY_GRAD,    index, zero);
+    storeVec3(OFFSET_LAMBDAS,           index, zero);
 }

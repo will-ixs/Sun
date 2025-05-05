@@ -38,8 +38,6 @@ struct ComputePushConstants{
     VkDeviceAddress particleBuffer;
     VkDeviceAddress gridCounter;
     VkDeviceAddress gridCells;
-    VkDeviceAddress sortedParticleIndices;
-    VkDeviceAddress cellStart;
     float timestep;
 };
 

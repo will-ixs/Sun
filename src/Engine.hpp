@@ -19,7 +19,7 @@ class PipelineBuilder;
 class MeshUploader;
 class Camera;
 
-constexpr uint32_t sideLength = 20;
+constexpr uint32_t sideLength = 30;
 constexpr uint32_t instanceCount = sideLength * sideLength * sideLength;
 constexpr float particleMass = 0.1f;
 constexpr uint32_t solverIterations = 3;
@@ -138,6 +138,8 @@ private:
     
     //GPU Data
     VkDeviceAddress particleBufferAddress;
+    VkDeviceAddress gridCountBufferAddress;
+    VkDeviceAddress gridCellsBufferAddress;
     glm::vec3 maxBoundingPos;
     glm::vec3 minBoundingPos;
 
@@ -166,7 +168,10 @@ private:
     std::unique_ptr<Buffer> deviceGridCounters;
     std::unique_ptr<Buffer> deviceGridCells;
     void updatePositionBuffer();
+    void calculateLambdas(int i);
+    void calculateDpiCollision(int i, float h);
     void updateParticlePositions();
+    void gpuUpdateParticlePositions(VkCommandBuffer cmd);
     glm::vec3 clampDeltaToBounds(uint32_t index);
 
     glm::vec3 gravityForce = glm::vec3(0.0f, -9.81f, 0.0f);
