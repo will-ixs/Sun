@@ -1,0 +1,117 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+
+#define M_PI 3.1415926535897932384626433832795
+#define NUM_PARTICLES 64000
+#define TABLE_SIZE 129631 
+const uint PRIME1 = 19349663;
+const uint PRIME2 = 73856093;
+const uint PRIME3 = 83492791;
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+const uint OFFSET_CURR_POS      	= 0;
+const uint OFFSET_PREV_POS      	= 3 * NUM_PARTICLES;
+const uint OFFSET_VELOCITY      	= 6 * NUM_PARTICLES;
+const uint OFFSET_DELTA         	= 9 * NUM_PARTICLES;
+const uint OFFSET_COLLISIONS    	= 12 * NUM_PARTICLES;
+const uint OFFSET_VORTICITY     	= 15 * NUM_PARTICLES;
+const uint OFFSET_VORTICITY_GRAD	= 18 * NUM_PARTICLES;
+const uint OFFSET_VISCOSITY     	= 21 * NUM_PARTICLES;
+const uint OFFSET_LAMBDAS       	= 24 * NUM_PARTICLES;
+
+layout(buffer_reference, std430) buffer ParticleBuffer{ 
+	float data[];
+};
+layout(buffer_reference, std430) buffer UintBuffer{ 
+	uint data[];
+};
+
+layout( push_constant ) uniform constants
+{	
+	ParticleBuffer particleBuffer;    
+    UintBuffer gridCounter;
+    UintBuffer gridCells;
+    UintBuffer neighborCount;
+    UintBuffer neighborList;
+    float timestep;
+    float smoothingRadius;
+    float restDensity;
+    float particleMass;
+    vec3 minBoundingPos;
+    vec3 maxBoundingPos;
+} PushConstants;
+
+
+vec3 loadVec3(uint baseOffset, uint index){
+    return vec3(
+        PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0],
+        PushConstants.particleBuffer.data[baseOffset + (3 * index) + 1],
+        PushConstants.particleBuffer.data[baseOffset + (3 * index) + 2]
+    );
+}
+void storeVec3(uint baseOffset, uint index, vec3 value) {
+    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.x;
+    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 1] = value.y;
+    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 2] = value.z;
+}
+float loadFloat(uint baseOffset, uint index){
+    return PushConstants.particleBuffer.data[baseOffset + index];
+}
+void storeFloat(uint baseOffset, uint index, float value) {
+    PushConstants.particleBuffer.data[baseOffset + index] = value;
+}
+
+float densityKernel(float r){
+    float factor = 315.0 / (64.0 * M_PI * (pow(PushConstants.smoothingRadius, 9.0)));
+    return factor * pow(((PushConstants.smoothingRadius * PushConstants.smoothingRadius) - (r * r)), 3.0);
+}
+
+float gradientKernel(float r){
+    float factor = 45.0 / (M_PI * pow(PushConstants.smoothingRadius, 6.0));
+    return factor * pow((PushConstants.smoothingRadius - r), 2.0);
+}
+
+//Vorticity gradient
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= NUM_PARTICLES) return;
+
+    vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
+    vec3 currVort = loadVec3(OFFSET_VORTICITY, index);
+    vec3 currVel = loadVec3(OFFSET_VELOCITY, index);
+    uint neighborCount = PushConstants.neighborCount.data[index];
+
+    float vorticityEpsilon = 0.25;
+    vec3 vorticityGradient = vec3(0.0);
+    for(uint p = 0; p < neighborCount; p++){
+        uint neighborIndex = PushConstants.neighborList.data[(12 * 27 * index) + p];
+        if(neighborIndex == index){
+            continue;
+        }
+        vec3 neighborPos = loadVec3(OFFSET_CURR_POS, neighborIndex);
+        if(length(currPos - neighborPos) > PushConstants.smoothingRadius){
+            continue;
+        }
+        vec3 neighborVort = loadVec3(OFFSET_VORTICITY, neighborIndex);
+
+        float dist = length(neighborPos - currPos);
+        if(dist > 0.0001){
+            float diff = length(neighborVort) - length(currVort);
+            vorticityGradient += (diff / dist) * ((neighborPos - currPos) / (dist + 0.0001));
+        }
+    }
+
+    if(length(vorticityGradient) > 0.0001){
+        vorticityGradient = normalize(vorticityGradient);
+    }else{
+        vorticityGradient = vec3(0.0);
+    }
+
+    vec3 vorticityVelocity = (PushConstants.timestep * (vorticityEpsilon * cross(vorticityGradient, currVort)));
+    currVel += vorticityVelocity;
+    
+    storeVec3(OFFSET_VORTICITY_GRAD, index, vorticityGradient);
+    storeVec3(OFFSET_VELOCITY, index, currVel);
+}   
+   
+   

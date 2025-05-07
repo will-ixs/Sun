@@ -74,6 +74,10 @@ void Engine::cleanup(){
 
     hostPositionBuffer->destroy();
     devicePositionBuffer->destroy();
+    deviceGridCells->destroy();
+    deviceGridCounters->destroy();
+    neighborCount->destroy();
+    neighborList->destroy();
 
     vmaDestroyAllocator(m_allocator);
 
@@ -406,7 +410,7 @@ void Engine::initDescriptors(){
 void Engine::initPipelines(){
     pb = std::make_unique<PipelineBuilder>();
     initMeshPipeline();    
-    initComputePipeline();
+    initComputePipelines();
 }
 
 void Engine::initMeshPipeline(){
@@ -461,7 +465,7 @@ void Engine::initMeshPipeline(){
 	vkDestroyShaderModule(m_device, frag, nullptr);
 }
 
-void Engine::initComputePipeline(){
+void Engine::initComputePipelines(){
     VkPushConstantRange pc = {
         .stageFlags = VK_SHADER_STAGE_ALL,
         .offset = 0,
@@ -479,56 +483,285 @@ void Engine::initComputePipeline(){
     };
 	vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &computePipelineLayout);
 
-    VkShaderModule shader;
-	if (!loadShader(&shader, "../shaders/predict_position.comp.spv")) {
-		std::cout << "Error when building the predict compute shader module" << std::endl;
+    VkShaderModule resetGrid;
+    VkShaderModule resetParticles;
+    VkShaderModule predictPosition;
+    
+    VkShaderModule buildGrid;
+    VkShaderModule neighbor;
+    
+    VkShaderModule lambdas;
+    VkShaderModule deltas;
+    VkShaderModule collisions;
+    
+    VkShaderModule vorticity;
+    VkShaderModule vorticityGradient;
+    VkShaderModule viscosity;
+	if (!loadShader(&resetGrid, "../shaders/reset_grid_data.comp.spv")) {
+		std::cout << "Error when building the reset_grid_data compute shader module" << std::endl;
 	}
 	else {
-		std::cout << "Built the triangle fragment shader module" << std::endl;
+		std::cout << "Built the reset_grid_data shader module" << std::endl;
+	}		
+    if (!loadShader(&resetParticles, "../shaders/reset_particle_data.comp.spv")) {
+		std::cout << "Error when building the reset_particle_data compute shader module" << std::endl;
+	}
+	else {
+		std::cout << "Built the reset_particle_data shader module" << std::endl;
 	}	
+    if (!loadShader(&predictPosition, "../shaders/predict_position.comp.spv")) {
+        std::cout << "Error when building the predict_position compute shader module" << std::endl;
+    }
+    else {
+        std::cout << "Built the predict_position shader module" << std::endl;
+    }
+
+    if (!loadShader(&buildGrid, "../shaders/build_grid.comp.spv")) {
+		std::cout << "Error when building the build_grid compute shader module" << std::endl;
+	}
+	else {
+        std::cout << "Built the build_grid shader module" << std::endl;
+	}	
+    if (!loadShader(&neighbor, "../shaders/find_neighbors.comp.spv")) {
+        std::cout << "Error when building the find_neighbors compute shader module" << std::endl;
+    }
+    else {
+        std::cout << "Built the find_neighbors shader module" << std::endl;
+    }
+
+    if (!loadShader(&lambdas, "../shaders/lambdas.comp.spv")) {
+		std::cout << "Error when building the lambdas compute shader module" << std::endl;
+	}
+	else {
+		std::cout << "Built the lambdas shader module" << std::endl;
+	}	
+    if (!loadShader(&deltas, "../shaders/deltas.comp.spv")) {
+		std::cout << "Error when building the deltas compute shader module" << std::endl;
+	}
+	else {
+		std::cout << "Built the deltas shader module" << std::endl;
+	}
+    if (!loadShader(&collisions, "../shaders/collisions.comp.spv")) {
+		std::cout << "Error when building the collisions compute shader module" << std::endl;
+	}
+	else {
+		std::cout << "Built the collisions shader module" << std::endl;
+	}
+    if (!loadShader(&vorticity, "../shaders/finalize.comp.spv")) {
+		std::cout << "Error when building the finalize compute shader module" << std::endl;
+	}
+	else {
+		std::cout << "Built the finalize shader module" << std::endl;
+	}
+    if (!loadShader(&vorticityGradient, "../shaders/finalize2.comp.spv")) {
+		std::cout << "Error when building the finalize2 compute shader module" << std::endl;
+	}
+	else {
+		std::cout << "Built the finalize2 shader module" << std::endl;
+	}
+    if (!loadShader(&viscosity, "../shaders/finalize3.comp.spv")) {
+		std::cout << "Error when building the finalize3 compute shader module" << std::endl;
+	}
+	else {
+		std::cout << "Built the finalize3 shader module" << std::endl;
+	}
+    VkPipelineCache computeCache;
+    VkPipelineCacheCreateInfo cacheCreateInfo {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+        .pNext = nullptr,
+        .initialDataSize = 0
+    };
+    vkCreatePipelineCache(m_device, &cacheCreateInfo, nullptr, &computeCache);
     
-    VkPipelineShaderStageCreateInfo stageinfo{
+
+    VkPipelineShaderStageCreateInfo predictStageInfo{
         .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .pNext = nullptr,
         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-        .module = shader,
+        .module = predictPosition,
+        .pName = "main"
+    };   
+    VkPipelineShaderStageCreateInfo resetGridStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = resetGrid,
+        .pName = "main"
+    };   
+    VkPipelineShaderStageCreateInfo resetParticleStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = resetParticles,
         .pName = "main"
     };
+
+    VkPipelineShaderStageCreateInfo buildGridStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = buildGrid,
+        .pName = "main"
+    };   
+    VkPipelineShaderStageCreateInfo neighborStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = neighbor,
+        .pName = "main"
+    };
+
+    VkPipelineShaderStageCreateInfo lambdaStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = lambdas,
+        .pName = "main"
+    };
+
+    VkPipelineShaderStageCreateInfo deltaStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = deltas,
+        .pName = "main"
+    };
+    VkPipelineShaderStageCreateInfo collisionStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = collisions,
+        .pName = "main"
+    };        
+    
+    VkPipelineShaderStageCreateInfo vortStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = vorticity,
+        .pName = "main"
+    };    
+    VkPipelineShaderStageCreateInfo vortGradStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = vorticityGradient,
+        .pName = "main"
+    };    
+    VkPipelineShaderStageCreateInfo viscStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = viscosity,
+        .pName = "main"
+    };    
 
 	VkComputePipelineCreateInfo computePipelineCreateInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
-        .stage = stageinfo,
+        .stage = predictStageInfo,
         .layout = computePipelineLayout
     };
-	
-	vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &computePredict);
+	vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computePredict);
+    computePipelineCreateInfo.stage = resetGridStageInfo;
+	vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeResetGrid);
+    computePipelineCreateInfo.stage = resetParticleStageInfo;
+	vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeResetParticles);
+    computePipelineCreateInfo.stage = buildGridStageInfo;
+	vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeGrid);
+    computePipelineCreateInfo.stage = deltaStageInfo;
+	vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeDeltas);
+    computePipelineCreateInfo.stage = neighborStageInfo;
+    vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeNeighbors);
+    computePipelineCreateInfo.stage = lambdaStageInfo;
+    vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeLambdas);
+    computePipelineCreateInfo.stage = vortStageInfo;
+    vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeVorticity);
+    computePipelineCreateInfo.stage = vortGradStageInfo;
+    vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeVorticityGradient);
+    computePipelineCreateInfo.stage = viscStageInfo;
+    vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeViscosity);
+    computePipelineCreateInfo.stage = collisionStageInfo;
+    vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeCollision);
+   
+    // vkDestroyShaderModule() all the modules
+    vkDestroyShaderModule(m_device, resetGrid, nullptr);
+    vkDestroyShaderModule(m_device, resetParticles, nullptr);
+    vkDestroyShaderModule(m_device, predictPosition, nullptr);
+    vkDestroyShaderModule(m_device, buildGrid, nullptr);
+    vkDestroyShaderModule(m_device, neighbor, nullptr);
+    vkDestroyShaderModule(m_device, lambdas, nullptr);
+    vkDestroyShaderModule(m_device, deltas, nullptr);
+    vkDestroyShaderModule(m_device, collisions, nullptr);
+    vkDestroyShaderModule(m_device, vorticity, nullptr);
+    vkDestroyShaderModule(m_device, vorticityGradient, nullptr);
+    vkDestroyShaderModule(m_device, viscosity, nullptr);
 }
 
 void Engine::initData(){
     
-    hostPositionBuffer = std::make_unique<Buffer>(m_device, m_allocator, instanceCount * sizeof(ParticleData), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    hostPositionBuffer = std::make_unique<Buffer>(m_device, m_allocator, instanceCount * sizeof(ParticleData), 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
+        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
     devicePositionBuffer = std::make_unique<Buffer>(m_device, m_allocator, instanceCount * sizeof(ParticleData), 
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
 
-    VkBufferDeviceAddressInfo addressInfo = {
+    deviceGridCounters= std::make_unique<Buffer>(m_device, m_allocator, tableSize * sizeof(uint32_t),
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+
+    deviceGridCells= std::make_unique<Buffer>(m_device, m_allocator, tableSize * sizeof(uint32_t) * 12,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+
+    neighborList = std::make_unique<Buffer>(m_device, m_allocator, instanceCount * sizeof(uint32_t) * 12 * 27,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+
+    neighborCount = std::make_unique<Buffer>(m_device, m_allocator, instanceCount * sizeof(uint32_t),
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+    
+    VkBufferDeviceAddressInfo positionAddressInfo = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
         .pNext = nullptr,
         .buffer = devicePositionBuffer->buffer
     };
-    particleBufferAddress = vkGetBufferDeviceAddress(m_device, &addressInfo);
+    VkBufferDeviceAddressInfo gridCounterAddressInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = deviceGridCounters->buffer
+    };    
+    VkBufferDeviceAddressInfo gridCellsAddressInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = deviceGridCells->buffer
+    };    
+    VkBufferDeviceAddressInfo neighborListAddressInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = neighborList->buffer
+    };    
+    VkBufferDeviceAddressInfo neighborCountAddressInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = neighborCount->buffer
+    };
+    particleBufferAddress = vkGetBufferDeviceAddress(m_device, &positionAddressInfo);    
+    gridCountBufferAddress = vkGetBufferDeviceAddress(m_device, &gridCounterAddressInfo); 
+    gridCellsBufferAddress = vkGetBufferDeviceAddress(m_device, &gridCellsAddressInfo); 
+    neighborCountBufferAddress = vkGetBufferDeviceAddress(m_device, &neighborCountAddressInfo);
+    neighborListBufferAddress = vkGetBufferDeviceAddress(m_device, &neighborListAddressInfo);
 
-
-        
 
     if (hostPositionBuffer->allocationInfo.pMappedData == nullptr) {
         throw std::runtime_error("Host position buffer not mapped.");
     }
 
-    maxBoundingPos = glm::vec3(45.0f, 0.0f, 0.0f);
-    minBoundingPos = glm::vec3(-45.0f, -25.0f, -120.0f);
+    maxBoundingPos = glm::vec3(60.0f, 0.0f, 0.0f);
+    minBoundingPos = glm::vec3(-60.0f, -55.0f, -120.0f);
 
     cellStart.resize(tableSize);
     tempCounts.resize(tableSize);
@@ -545,11 +778,14 @@ void Engine::initData(){
     particleVorticity.resize(instanceCount);
     particleVorticityGradient.resize(instanceCount);
     particleViscosityDelta.resize(instanceCount);
+
+    gridCounters.resize(tableSize);
+    gridCells.resize(tableSize * 12);
     
     glm::vec3 step = (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
-    for (int x = 0; x < sideLength; ++x) {
-        for (int y = 0; y < sideLength; ++y) {
-            for (int z = 0; z < sideLength; ++z) {
+    for (uint32_t x = 0; x < sideLength; ++x) {
+        for (uint32_t y = 0; y < sideLength; ++y) {
+            for (uint32_t z = 0; z < sideLength; ++z) {
                 glm::vec3 pos = minBoundingPos + glm::vec3(x, y, z) * step;
                 particleCurrPosition.push_back(pos);
                 particlePrevPosition.push_back(pos);
@@ -758,7 +994,7 @@ void Engine::updatePositionBuffer(){
     memcpy((char*)hostPositionBuffer->allocationInfo.pMappedData + OFFSET_VORTICITY_GRAD,   particleVorticityGradient.data(),   instanceCount * sizeof(glm::vec3));
     memcpy((char*)hostPositionBuffer->allocationInfo.pMappedData + OFFSET_VISCOSITY,        particleViscosityDelta.data(),      instanceCount * sizeof(glm::vec3));
     memcpy((char*)hostPositionBuffer->allocationInfo.pMappedData + OFFSET_LAMBDAS,          particleLambdas.data(),             instanceCount * sizeof(float));
-    
+
     prepImmediateTransfer();
     
     VkBufferCopy instanceCopy = {
@@ -769,6 +1005,11 @@ void Engine::updatePositionBuffer(){
     
     vkCmdCopyBuffer(m_immTransfer.buffer, hostPositionBuffer->buffer, devicePositionBuffer->buffer, 1, &instanceCopy);
     
+    vkCmdFillBuffer(m_immTransfer.buffer, deviceGridCounters->buffer, 0 , VK_WHOLE_SIZE, 0);
+    vkCmdFillBuffer(m_immTransfer.buffer, deviceGridCells->buffer, 0 , VK_WHOLE_SIZE, 0);
+    vkCmdFillBuffer(m_immTransfer.buffer, neighborCount->buffer, 0 , VK_WHOLE_SIZE, 0);
+    vkCmdFillBuffer(m_immTransfer.buffer, neighborList->buffer, 0 , VK_WHOLE_SIZE, 0);
+
     submitImmediateTransfer();
 }
 
@@ -822,7 +1063,7 @@ float Engine::gradientKernel(float r){
 }
 
 void Engine::resetPersistentParticleData(){
-    for(int i = 0; i < instanceCount; i++){
+    for(uint32_t i = 0; i < instanceCount; i++){
         positionDeltas.at(i) = glm::vec3(0.0f);
         particleCollisions.at(i) = glm::vec3(0.0f);
         particleVorticity.at(i) = glm::vec3(0.0f);
@@ -838,9 +1079,9 @@ void Engine::resetParticlePositions(){
     particlePrevPosition.clear();
     particleVelocity.clear();
     glm::vec3 step = (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
-    for (int x = 0; x < sideLength; ++x) {
-        for (int y = 0; y < sideLength; ++y) {
-            for (int z = 0; z < sideLength; ++z) {
+    for (uint32_t x = 0; x < sideLength; ++x) {
+        for (uint32_t y = 0; y < sideLength; ++y) {
+            for (uint32_t z = 0; z < sideLength; ++z) {
                 glm::vec3 pos = minBoundingPos + glm::vec3(x, y, z) * step;
                 particleCurrPosition.push_back(pos);
                 particlePrevPosition.push_back(pos);
@@ -848,6 +1089,8 @@ void Engine::resetParticlePositions(){
             }
         }
     }
+
+    updatePositionBuffer();
 }
 
 void Engine::randomizeParticlePositions(){
@@ -865,6 +1108,8 @@ void Engine::randomizeParticlePositions(){
         particlePrevPosition.at(i) = pos;
         particleVelocity.at(i) = glm::vec3(0.0f);
     }
+
+    updatePositionBuffer();
 }
 
 size_t Engine::hashGridCoord(int x, int y, int z) {
@@ -986,7 +1231,7 @@ void Engine::calculateDpiCollision(int i, float h){
 void Engine::updateParticlePositions(){
     //Dispatch reset persistent data
     resetPersistentParticleData();
-    float h = deltaTime;
+    float h = 1.0/60.0;
 
     //Dispatch predict position
     //Unconstrained Step (Position Prediction)
@@ -1009,7 +1254,7 @@ void Engine::updateParticlePositions(){
     );
     
     //Apply Constraints
-    for(int s = 0; s < solverIterations; s++){
+    for(uint32_t s = 0; s < solverIterations; s++){
         std::for_each(
             std::execution::par_unseq,
             particleCurrPosition.begin(),
@@ -1022,6 +1267,7 @@ void Engine::updateParticlePositions(){
         );
     }
 
+    //Vorticity
     std::for_each(
         std::execution::par_unseq,
         particleCurrPosition.begin(),
@@ -1084,44 +1330,106 @@ void Engine::updateParticlePositions(){
                 particleViscosityDelta.at(i) += scaling * vij;
             }
             particleVelocity.at(i) += viscosity * particleViscosityDelta.at(i);
+            particleCurrPosition.at(i) = particlePrevPosition.at(i) + (h * particleVelocity.at(i));
         }
     );
 }
 
 void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
-        float h = deltaTime;
+
+        VkMemoryBarrier2 uberBarrier = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT
+        };
+
+        VkDependencyInfo dependencyInfo = {};
+        dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependencyInfo.memoryBarrierCount = 1;
+        dependencyInfo.pMemoryBarriers = &uberBarrier;
+
+        vkCmdPipelineBarrier2(cmd , &dependencyInfo);
         ComputePushConstants cpcs;
         cpcs.particleBuffer = particleBufferAddress;
         cpcs.gridCounter = gridCountBufferAddress;
         cpcs.gridCells = gridCellsBufferAddress;
-        cpcs.timestep = h;
+        cpcs.neighborCount = neighborCountBufferAddress;
+        cpcs.neighborList = neighborListBufferAddress;
+        cpcs.timestep = 1.0f/60.0f;
         cpcs.smoothingRadius = smoothingRadius;
         cpcs.restDensity = restDensity;
         cpcs.particleMass = particleMass;
         cpcs.minBoundingPos = minBoundingPos;
         cpcs.maxBoundingPos = maxBoundingPos;
+
+        VkPipelineBindPoint compute = VK_PIPELINE_BIND_POINT_COMPUTE;
+        uint32_t particleX = (instanceCount + 63) / 64;
+        uint32_t tableX = (tableSize + 63) / 64;
         
         //Dispatch predict position
+        vkCmdBindPipeline(cmd, compute, computePredict);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        vkCmdDispatch(cmd, particleX, 1, 1);
         //Dispatch reset persistent data
+        vkCmdBindPipeline(cmd, compute, computeResetParticles);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        vkCmdDispatch(cmd, particleX, 1, 1);
         //Dispatch reset grid
-        //memory barrier
+        vkCmdBindPipeline(cmd, compute, computeResetGrid);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        vkCmdDispatch(cmd, tableX, 1, 1);
+        //Grid depends on current positions, barrier
+        vkCmdPipelineBarrier2(cmd, &dependencyInfo);
         
-        //Dispatch build grid
-        //memory barrier
-
-        //Dispatch constraint solver
-        //Memory barrier
-    
-
-        //BONUS
-        //Dispatch calculate vorticity
-        //memory barrier
+        //Dispatch grid build
+        vkCmdBindPipeline(cmd, compute, computeGrid);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        vkCmdDispatch(cmd, particleX, 1, 1);
+        //Neighbors depend on built grid
+        vkCmdPipelineBarrier2(cmd, &dependencyInfo);
         
-        //Dispatch calculate vorticity gradient
-        //memory barrier
+        //Dispatch create neighbor list
+        vkCmdBindPipeline(cmd, compute, computeNeighbors);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        vkCmdDispatch(cmd, particleX, 1, 1);
+        //Solving constraints depends on neighbor list
+        vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+        
 
-        //Dispatch apply viscosity force
-        //Memory barrier
+        for(uint32_t s = 0; s < solverIterations; s++){
+            //Dispatch solve constraints
+            vkCmdBindPipeline(cmd, compute, computeLambdas);
+            vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+            vkCmdDispatch(cmd, particleX, 1, 1);
+            vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+
+            vkCmdBindPipeline(cmd, compute, computeDeltas);
+            vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+            vkCmdDispatch(cmd, particleX, 1, 1);    
+            vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+
+            
+
+        }
+        vkCmdBindPipeline(cmd, compute, computeCollision);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        vkCmdDispatch(cmd, particleX, 1, 1);    
+        vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+        
+        // vkCmdBindPipeline(cmd, compute, computeVorticity);
+        // vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        // vkCmdDispatch(cmd, particleX, 1, 1);    
+        // vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+        // vkCmdBindPipeline(cmd, compute, computeVorticityGradient);
+        // vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        // vkCmdDispatch(cmd, particleX, 1, 1);    
+        // vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+        // vkCmdBindPipeline(cmd, compute, computeViscosity);
+        // vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        // vkCmdDispatch(cmd, particleX, 1, 1);    
+        // vkCmdPipelineBarrier2(cmd, &dependencyInfo);
 }
 
 //Drawing
@@ -1159,7 +1467,9 @@ void Engine::draw(){
  	drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     depthImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
-    // gpuUpdateParticlePositions(cmd);
+    // if(frameNumber < 100){
+        gpuUpdateParticlePositions(cmd);
+    // }
     //Draw
     drawMeshes(cmd);
 
@@ -1381,7 +1691,17 @@ void Engine::run(){
                     {
                         minBoundingPos.x -= 0.5;
                         break;
-                    }                    
+                    }
+                    case SDLK_3:
+                    {
+                        maxBoundingPos.x += 0.5;
+                        break;
+                    }
+                    case SDLK_4:
+                    {
+                        maxBoundingPos.x -= 0.5;
+                        break;
+                    }               
                     case SDLK_R:
                     {
                         resetParticlePositions();
@@ -1451,8 +1771,10 @@ void Engine::run(){
 
         ImGui::Render();
 
-        updateParticlePositions();
-        updatePositionBuffer();
+        // if(frameNumber < 100){
+            // updateParticlePositions();
+            // updatePositionBuffer();
+        // }
         draw();
         if(frameNumber % 144 == 0){
             double frameTime = (SDL_GetTicksNS() - initializationTime - currentTime) / 1e6;

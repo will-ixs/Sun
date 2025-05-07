@@ -34,16 +34,18 @@ struct PushConstants{
     glm::vec3 camWorldPos;
 };
 
-struct ComputePushConstants{
+struct alignas(16) ComputePushConstants{
     VkDeviceAddress particleBuffer;
     VkDeviceAddress gridCounter;
     VkDeviceAddress gridCells;
+    VkDeviceAddress neighborCount;
+    VkDeviceAddress neighborList;
     float timestep;
     float smoothingRadius;
     float restDensity;
     float particleMass;
-    glm::vec3 minBoundingPos;
-    glm::vec3 maxBoundingPos;
+    alignas(16) glm::vec3 minBoundingPos;
+    alignas(16) glm::vec3 maxBoundingPos;
 };
 
 struct Vertex {

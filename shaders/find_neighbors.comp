@@ -4,10 +4,12 @@
 
 #define NUM_PARTICLES 64000
 #define TABLE_SIZE 129631 
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
 const uint PRIME1 = 19349663;
 const uint PRIME2 = 73856093;
 const uint PRIME3 = 83492791;
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 const uint OFFSET_CURR_POS      	= 0;
 const uint OFFSET_PREV_POS      	= 3 * NUM_PARTICLES;
@@ -40,6 +42,7 @@ layout( push_constant ) uniform constants
     vec3 minBoundingPos;
     vec3 maxBoundingPos;
 } PushConstants;
+
 vec3 loadVec3(uint baseOffset, uint index){
     return vec3(
         PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0],
@@ -47,11 +50,7 @@ vec3 loadVec3(uint baseOffset, uint index){
         PushConstants.particleBuffer.data[baseOffset + (3 * index) + 2]
     );
 }
-void storeVec3(uint baseOffset, uint index, vec3 value) {
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.x;
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 1] = value.y;
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 2] = value.z;
-}
+
 uint hashGridCoord(int x, int y, int z) {    
     uint xOffset = (x < 0) ? 1u : 0u;
     uint yOffset = (y < 0) ? 1u : 0u;
@@ -68,14 +67,32 @@ uint hashGridCoord(int x, int y, int z) {
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= NUM_PARTICLES) return;
-
+    
+    uint numNeighbors = 0u;
+    
     vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
-    ivec3 cell = ivec3(floor(currPos / PushConstants.smoothingRadius));
-    uint gridCounterIndex = hashGridCoord(cell.x, cell.y, cell.z);
+    ivec3 cellPos = ivec3(floor(currPos / PushConstants.smoothingRadius));
+    const uint maxNeighbors = 12 * 27;
+    for(int dx = -1; dx<=1; dx++){
+    for(int dy = -1; dy<=1; dy++){
+    for(int dz = -1; dz<=1; dz++){
+        ivec3 neighborCell = cellPos + ivec3(dx, dy, dz);
+        uint neighborHash = hashGridCoord(neighborCell.x, neighborCell.y, neighborCell.z);
+        uint cellCount = PushConstants.gridCounter.data[neighborHash];
+        cellCount = cellCount < maxNeighbors ? cellCount : maxNeighbors;
 
-    uint cellGridIndex = atomicAdd(PushConstants.gridCounter.data[gridCounterIndex], 1u);
+        for(uint i = 0u; i < cellCount; i++){
+            uint particleIndex = PushConstants.gridCells.data[(12 * neighborHash) + i];            
+            if(particleIndex == index){
+                continue;
+            }
 
-    if(cellGridIndex < 12){
-        PushConstants.gridCells.data[(12 * gridCounterIndex) + cellGridIndex] = index;
-    }
+            if(numNeighbors < maxNeighbors){
+                PushConstants.neighborList.data[(12 * 27 * index) + numNeighbors] = particleIndex;
+                numNeighbors++;
+            }
+        }
+    }}}
+
+    PushConstants.neighborCount.data[index] = numNeighbors;
 }

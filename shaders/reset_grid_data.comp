@@ -1,7 +1,8 @@
 #version 450
 #extension GL_EXT_buffer_reference : require
 
-#define NUM_PARTICLES 8000
+#define NUM_PARTICLES 64000
+#define TABLE_SIZE 129631 
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -31,18 +32,13 @@ layout( push_constant ) uniform constants
     float smoothingRadius;
     float restDensity;
     float particleMass;
+    vec3 minBoundingPos;
+    vec3 maxBoundingPos;
 } PushConstants;
-
-void storeVec3(uint baseOffset, uint index, vec3 value) {
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.x;
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.y;
-    PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.z;
-}
 
 void main() {
     uint index = gl_GlobalInvocationID.x;
-    if (index >= NUM_PARTICLES) return;
+    if (index >= TABLE_SIZE) return;
 
-    vec3 zero = vec3(0.0, 0.0, 0.0);
     PushConstants.gridCounter.data[index] = 0;
 }

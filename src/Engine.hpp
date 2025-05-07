@@ -19,11 +19,6 @@ class PipelineBuilder;
 class MeshUploader;
 class Camera;
 
-constexpr uint32_t sideLength = 30;
-constexpr uint32_t instanceCount = sideLength * sideLength * sideLength;
-constexpr float particleMass = 0.1f;
-constexpr uint32_t solverIterations = 3;
-
 class Engine
 {
 private:
@@ -47,7 +42,7 @@ private:
 
     //Pipelines
     void initMeshPipeline();
-    void initComputePipeline();
+    void initComputePipelines();
 
     //drawing
     void draw();
@@ -90,13 +85,24 @@ private:
     VkPipelineLayout meshPipelineLayout;
     VkPipeline meshPipeline;
 
+    VkFence computeFence;
     VkPipelineLayout computePipelineLayout;
-    VkPipeline computePredict;
-    VkPipeline computeGrid;
-    VkPipeline computeConstraints;
+    
     VkPipeline computeResetGrid;
     VkPipeline computeResetParticles;
+    VkPipeline computePredict;
 
+    VkPipeline computeGrid;
+    VkPipeline computeNeighbors;
+
+    VkPipeline computeLambdas;
+    VkPipeline computeDeltas;
+    VkPipeline computeCollision;
+
+    VkPipeline computeVorticity;
+    VkPipeline computeVorticityGradient;
+    VkPipeline computeViscosity;
+    
     std::unique_ptr<PipelineBuilder> pb;
 
     //Queue Info
@@ -122,6 +128,10 @@ private:
 
 
     //PBF
+    const uint32_t sideLength = 40;
+    const uint32_t instanceCount = sideLength * sideLength * sideLength;
+    const float particleMass = 10.1f;
+    const uint32_t solverIterations = 3;
     const int tableSize = 129631;
     const uint32_t PRIME1 = 19349663;
     const uint32_t PRIME2 = 73856093;
@@ -134,16 +144,13 @@ private:
     void buildCellStart();
     
     //GPU Data
-    VkDeviceAddress particleBufferAddress;
-    VkDeviceAddress gridCountBufferAddress;
-    VkDeviceAddress gridCellsBufferAddress;
     glm::vec3 maxBoundingPos;
     glm::vec3 minBoundingPos;
 
     std::vector<uint32_t> gridCounters;     //tableSize - contains number of particles in each cell
     std::vector<uint32_t> gridCells;        //tableSize * cellSize(10 if it gets weirdly compressed) - contains indices of particles in each cell
     // std::vector<uint32_t> particleNeighbors //instanceCount * (cellSize * 27) -  
-    std::vector<int> cellStart;        // size = tableSize
+    std::vector<int> cellStart;             // size = tableSize
     std::vector<int> particleIndices;
     std::vector<int> tempCounts;
 
@@ -160,10 +167,17 @@ private:
 
     std::vector<std::vector<int>> particleNeighbors;
 
+    VkDeviceAddress particleBufferAddress;
+    VkDeviceAddress gridCountBufferAddress;
+    VkDeviceAddress gridCellsBufferAddress;
+    VkDeviceAddress neighborCountBufferAddress;
+    VkDeviceAddress neighborListBufferAddress;
     std::unique_ptr<Buffer> hostPositionBuffer;
     std::unique_ptr<Buffer> devicePositionBuffer;
     std::unique_ptr<Buffer> deviceGridCounters;
     std::unique_ptr<Buffer> deviceGridCells;
+    std::unique_ptr<Buffer> neighborCount;
+    std::unique_ptr<Buffer> neighborList;
     void updatePositionBuffer();
     void calculateLambdas(int i);
     void calculateDpiCollision(int i, float h);

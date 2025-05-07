@@ -1,7 +1,7 @@
-#version 450
+ #version 450
 #extension GL_EXT_buffer_reference : require
-#extension GL_EXT_shader_atomic_int64: require
 
+#define M_PI 3.1415926535897932384626433832795
 #define NUM_PARTICLES 64000
 #define TABLE_SIZE 129631 
 const uint PRIME1 = 19349663;
@@ -40,6 +40,8 @@ layout( push_constant ) uniform constants
     vec3 minBoundingPos;
     vec3 maxBoundingPos;
 } PushConstants;
+
+
 vec3 loadVec3(uint baseOffset, uint index){
     return vec3(
         PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0],
@@ -51,6 +53,12 @@ void storeVec3(uint baseOffset, uint index, vec3 value) {
     PushConstants.particleBuffer.data[baseOffset + (3 * index) + 0] = value.x;
     PushConstants.particleBuffer.data[baseOffset + (3 * index) + 1] = value.y;
     PushConstants.particleBuffer.data[baseOffset + (3 * index) + 2] = value.z;
+}
+float loadFloat(uint baseOffset, uint index){
+    return PushConstants.particleBuffer.data[baseOffset + index];
+}
+void storeFloat(uint baseOffset, uint index, float value) {
+    PushConstants.particleBuffer.data[baseOffset + index] = value;
 }
 uint hashGridCoord(int x, int y, int z) {    
     uint xOffset = (x < 0) ? 1u : 0u;
@@ -70,12 +78,42 @@ void main() {
     if (index >= NUM_PARTICLES) return;
 
     vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
-    ivec3 cell = ivec3(floor(currPos / PushConstants.smoothingRadius));
-    uint gridCounterIndex = hashGridCoord(cell.x, cell.y, cell.z);
-
-    uint cellGridIndex = atomicAdd(PushConstants.gridCounter.data[gridCounterIndex], 1u);
-
-    if(cellGridIndex < 12){
-        PushConstants.gridCells.data[(12 * gridCounterIndex) + cellGridIndex] = index;
+    vec3 prevPos = loadVec3(OFFSET_PREV_POS, index);
+    vec3 deltaP = loadVec3(OFFSET_DELTA, index);
+    
+    vec3 newPos = currPos + deltaP;
+    vec3 collision = vec3(1.0);
+    float dampingFactor = 1.0;
+    // check each axis for collision and invert velocity if crossing
+    //X
+    if (newPos.x < PushConstants.minBoundingPos.x) {
+        newPos.x = PushConstants.minBoundingPos.x;
+        collision.x *= -dampingFactor;
+    } else if (newPos.x > PushConstants.maxBoundingPos.x) {
+        newPos.x = PushConstants.maxBoundingPos.x;
+        collision.x *= -dampingFactor;
     }
+    //Y
+    if (newPos.y < PushConstants.minBoundingPos.y) {
+        newPos.y = PushConstants.minBoundingPos.y;
+        collision.y *= -dampingFactor;
+    } else if (newPos.y > PushConstants.maxBoundingPos.y) {
+        newPos.y = PushConstants.maxBoundingPos.y;
+        collision.y *= -dampingFactor;
+    }
+    //Z
+    if (newPos.z < PushConstants.minBoundingPos.z) {
+        newPos.z = PushConstants.minBoundingPos.z;
+        collision.z *= -dampingFactor;
+    } else if (newPos.z > PushConstants.maxBoundingPos.z) {
+        newPos.z = PushConstants.maxBoundingPos.z;
+        collision.z *= -dampingFactor;
+    }
+
+    vec3 finalVel = (newPos - prevPos) / PushConstants.timestep;
+    finalVel.x *= collision.x;
+    finalVel.y *= collision.y;
+    finalVel.z *= collision.z;
+    storeVec3(OFFSET_CURR_POS, index, newPos);
+    storeVec3(OFFSET_VELOCITY, index, finalVel);
 }
