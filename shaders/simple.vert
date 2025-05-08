@@ -2,7 +2,7 @@
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_nonuniform_qualifier : require
 
-#define NUM_PARTICLES 64000
+#define NUM_PARTICLES 125000
 
 const uint OFFSET_CURR_POS      	= 0;
 const uint OFFSET_PREV_POS      	= 3 * NUM_PARTICLES;

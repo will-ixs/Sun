@@ -760,11 +760,11 @@ void Engine::initData(){
         throw std::runtime_error("Host position buffer not mapped.");
     }
 
-    maxBoundingPos = glm::vec3(60.0f, 0.0f, 0.0f);
-    minBoundingPos = glm::vec3(-60.0f, -55.0f, -120.0f);
+    maxBoundingPos = glm::vec3(100.0f, 0.0f, 0.0f);
+    minBoundingPos = glm::vec3(-100.0f, -65.0f, -200.0f);
 
-    cellStart.resize(tableSize);
-    tempCounts.resize(tableSize);
+    // cellStart.resize(tableSize);
+    // tempCounts.resize(tableSize);
 
     particleCurrPosition.reserve(instanceCount);
     particlePrevPosition.reserve(instanceCount);
@@ -779,8 +779,6 @@ void Engine::initData(){
     particleVorticityGradient.resize(instanceCount);
     particleViscosityDelta.resize(instanceCount);
 
-    gridCounters.resize(tableSize);
-    gridCells.resize(tableSize * 12);
     
     glm::vec3 step = (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
     for (uint32_t x = 0; x < sideLength; ++x) {
@@ -1329,7 +1327,7 @@ void Engine::updateParticlePositions(){
                 float scaling = densityKernel(glm::length(particle - neighbor));
                 particleViscosityDelta.at(i) += scaling * vij;
             }
-            particleVelocity.at(i) += viscosity * particleViscosityDelta.at(i);
+            particleVelocity.at(i) += viscosityEps * particleViscosityDelta.at(i);
             particleCurrPosition.at(i) = particlePrevPosition.at(i) + (h * particleVelocity.at(i));
         }
     );
@@ -1337,18 +1335,32 @@ void Engine::updateParticlePositions(){
 
 void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
 
-        VkMemoryBarrier2 uberBarrier = {
+        VkMemoryBarrier2 prevBarrier = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
             .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT
+        };
+        VkMemoryBarrier2 computeBarrier = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT
+        };
+        VkMemoryBarrier2 graphicsBarrier = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT
         };
 
         VkDependencyInfo dependencyInfo = {};
         dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
         dependencyInfo.memoryBarrierCount = 1;
-        dependencyInfo.pMemoryBarriers = &uberBarrier;
+        dependencyInfo.pMemoryBarriers = &prevBarrier;
 
         vkCmdPipelineBarrier2(cmd , &dependencyInfo);
         ComputePushConstants cpcs;
@@ -1381,6 +1393,7 @@ void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
         vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
         vkCmdDispatch(cmd, tableX, 1, 1);
         //Grid depends on current positions, barrier
+        dependencyInfo.pMemoryBarriers = &computeBarrier;
         vkCmdPipelineBarrier2(cmd, &dependencyInfo);
         
         //Dispatch grid build
@@ -1410,26 +1423,27 @@ void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
             vkCmdDispatch(cmd, particleX, 1, 1);    
             vkCmdPipelineBarrier2(cmd, &dependencyInfo);
 
-            
-
+            vkCmdBindPipeline(cmd, compute, computeCollision);
+            vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+            vkCmdDispatch(cmd, particleX, 1, 1);    
+            vkCmdPipelineBarrier2(cmd, &dependencyInfo);
         }
-        vkCmdBindPipeline(cmd, compute, computeCollision);
+
+        
+        vkCmdBindPipeline(cmd, compute, computeVorticity);
         vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
         vkCmdDispatch(cmd, particleX, 1, 1);    
         vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+        vkCmdBindPipeline(cmd, compute, computeVorticityGradient);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        vkCmdDispatch(cmd, particleX, 1, 1);    
+        vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+        vkCmdBindPipeline(cmd, compute, computeViscosity);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        vkCmdDispatch(cmd, particleX, 1, 1);    
         
-        // vkCmdBindPipeline(cmd, compute, computeVorticity);
-        // vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
-        // vkCmdDispatch(cmd, particleX, 1, 1);    
-        // vkCmdPipelineBarrier2(cmd, &dependencyInfo);
-        // vkCmdBindPipeline(cmd, compute, computeVorticityGradient);
-        // vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
-        // vkCmdDispatch(cmd, particleX, 1, 1);    
-        // vkCmdPipelineBarrier2(cmd, &dependencyInfo);
-        // vkCmdBindPipeline(cmd, compute, computeViscosity);
-        // vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
-        // vkCmdDispatch(cmd, particleX, 1, 1);    
-        // vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+        dependencyInfo.pMemoryBarriers = &graphicsBarrier;
+        vkCmdPipelineBarrier2(cmd, &dependencyInfo);
 }
 
 //Drawing
@@ -1763,7 +1777,7 @@ void Engine::run(){
 			ImGui::InputFloat("restDensity", &restDensity, 100.0f, 1000.0f, "%.6f");
 			ImGui::InputFloat("epsilon", &epsilon, 0.00001f, 0.001f, "%.6f");
 			ImGui::InputFloat("vorticity", &vorticityEpsilon, 0.01f, 0.1f, "%.6f");
-			ImGui::InputFloat("viscosity", &viscosity, 0.0001f, 0.01f, "%.6f");
+			ImGui::InputFloat("viscosity", &viscosityEps, 0.0001f, 0.01f, "%.6f");
 			ImGui::InputFloat3("minPoint", (float*)&minBoundingPos);
 			ImGui::InputFloat3("maxPoint", (float*)&maxBoundingPos);
 		}

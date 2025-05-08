@@ -2,8 +2,8 @@
 #extension GL_EXT_buffer_reference : require
 
 #define M_PI 3.1415926535897932384626433832795
-#define NUM_PARTICLES 64000
-#define TABLE_SIZE 129631 
+#define NUM_PARTICLES 125000
+#define TABLE_SIZE 251087 
 const uint PRIME1 = 19349663;
 const uint PRIME2 = 73856093;
 const uint PRIME3 = 83492791;
@@ -82,15 +82,11 @@ void main() {
     uint neighborCount = PushConstants.neighborCount.data[index];
     for(uint p = 0; p < neighborCount; p++){
         uint neighborIndex = PushConstants.neighborList.data[(12 * 27 * index) + p];
-    // for(uint p = 0; p < 1000; p++){
-        // uint neighborIndex = p;
         if(neighborIndex == index){
             continue;
         }
         vec3 neighborPos = loadVec3(OFFSET_CURR_POS, neighborIndex);
-        if(length(currPos - neighborPos) > PushConstants.smoothingRadius){
-            continue;
-        }
+
         float r = length(currPos - neighborPos);
         if(r * r < PushConstants.smoothingRadius * PushConstants.smoothingRadius){
             density += densityKernel(r);
@@ -103,8 +99,6 @@ void main() {
 
     for(uint p = 0; p < neighborCount; p++){
         uint neighborIndex = PushConstants.neighborList.data[(12 * 27 * index) + p];
-    // for(uint p = 0; p < 1000; p++){
-        // uint neighborIndex = p;
         if(neighborIndex == index){
             continue;
         }

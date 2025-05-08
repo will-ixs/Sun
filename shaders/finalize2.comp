@@ -2,8 +2,8 @@
 #extension GL_EXT_buffer_reference : require
 
 #define M_PI 3.1415926535897932384626433832795
-#define NUM_PARTICLES 64000
-#define TABLE_SIZE 129631 
+#define NUM_PARTICLES 125000
+#define TABLE_SIZE 251087 
 const uint PRIME1 = 19349663;
 const uint PRIME2 = 73856093;
 const uint PRIME3 = 83492791;
@@ -70,6 +70,7 @@ float gradientKernel(float r){
     float factor = 45.0 / (M_PI * pow(PushConstants.smoothingRadius, 6.0));
     return factor * pow((PushConstants.smoothingRadius - r), 2.0);
 }
+ 
 
 //Vorticity gradient
 void main() {
@@ -78,9 +79,10 @@ void main() {
 
     vec3 currPos = loadVec3(OFFSET_CURR_POS, index);
     vec3 currVort = loadVec3(OFFSET_VORTICITY, index);
+
     vec3 currVel = loadVec3(OFFSET_VELOCITY, index);
     uint neighborCount = PushConstants.neighborCount.data[index];
-
+    
     float vorticityEpsilon = 0.25;
     vec3 vorticityGradient = vec3(0.0);
     for(uint p = 0; p < neighborCount; p++){
@@ -93,12 +95,8 @@ void main() {
             continue;
         }
         vec3 neighborVort = loadVec3(OFFSET_VORTICITY, neighborIndex);
-
-        float dist = length(neighborPos - currPos);
-        if(dist > 0.0001){
-            float diff = length(neighborVort) - length(currVort);
-            vorticityGradient += (diff / dist) * ((neighborPos - currPos) / (dist + 0.0001));
-        }
+        float neighborLen = length(neighborVort);
+        vorticityGradient += neighborLen * (length(neighborPos - currPos) * normalize(neighborPos - currPos));
     }
 
     if(length(vorticityGradient) > 0.0001){
@@ -107,11 +105,9 @@ void main() {
         vorticityGradient = vec3(0.0);
     }
 
-    vec3 vorticityVelocity = (PushConstants.timestep * (vorticityEpsilon * cross(vorticityGradient, currVort)));
-    currVel += vorticityVelocity;
+    vec3 vorticityForce = PushConstants.timestep * (vorticityEpsilon * cross(vorticityGradient, currVort));
+    currVel += (PushConstants.timestep * vorticityForce);
     
     storeVec3(OFFSET_VORTICITY_GRAD, index, vorticityGradient);
     storeVec3(OFFSET_VELOCITY, index, currVel);
 }   
-   
-   

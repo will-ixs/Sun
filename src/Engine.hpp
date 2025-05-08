@@ -128,16 +128,16 @@ private:
 
 
     //PBF
-    const uint32_t sideLength = 40;
+    const uint32_t sideLength = 50;
     const uint32_t instanceCount = sideLength * sideLength * sideLength;
     const float particleMass = 10.1f;
     const uint32_t solverIterations = 3;
-    const int tableSize = 129631;
+    const int tableSize = 251087;
     const uint32_t PRIME1 = 19349663;
     const uint32_t PRIME2 = 73856093;
     const uint32_t PRIME3 = 83492791;
 
-    std::vector<std::vector<int>> grid;
+    // std::vector<std::vector<int>> grid;
     size_t hashGridCoord(int x, int y, int z);
     void buildGrid();
     void findNeighbors(int i, std::vector<int>& neighbors);
@@ -147,8 +147,8 @@ private:
     glm::vec3 maxBoundingPos;
     glm::vec3 minBoundingPos;
 
-    std::vector<uint32_t> gridCounters;     //tableSize - contains number of particles in each cell
-    std::vector<uint32_t> gridCells;        //tableSize * cellSize(10 if it gets weirdly compressed) - contains indices of particles in each cell
+    // std::vector<uint32_t> gridCounters;     //tableSize - contains number of particles in each cell
+    // std::vector<uint32_t> gridCells;        //tableSize * cellSize(10 if it gets weirdly compressed) - contains indices of particles in each cell
     // std::vector<uint32_t> particleNeighbors //instanceCount * (cellSize * 27) -  
     std::vector<int> cellStart;             // size = tableSize
     std::vector<int> particleIndices;
@@ -192,7 +192,7 @@ private:
     float restDensity = 10000.0f;
     float epsilon = 1e-4f;
     float vorticityEpsilon = 0.25f;
-    float viscosity = 0.01f;                                                                         
+    float viscosityEps = 0.01f;                                                                         
     float densityKernel(float r);
     float gradientKernel(float r);
     void resetPersistentParticleData();

@@ -2,8 +2,8 @@
 #extension GL_EXT_buffer_reference : require
 
 #define M_PI 3.1415926535897932384626433832795
-#define NUM_PARTICLES 64000
-#define TABLE_SIZE 129631 
+#define NUM_PARTICLES 125000
+#define TABLE_SIZE 251087 
 const uint PRIME1 = 19349663;
 const uint PRIME2 = 73856093;
 const uint PRIME3 = 83492791;
@@ -71,6 +71,12 @@ float gradientKernel(float r){
     return factor * pow((PushConstants.smoothingRadius - r), 2.0);
 }
 
+float scorr(float dist){
+    float top = densityKernel(dist);
+    float bot = densityKernel(0.1);
+    return -0.01 * pow((top / bot), 4);
+}
+
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= NUM_PARTICLES) return;
@@ -89,13 +95,14 @@ void main() {
             continue;
         }
         vec3 neighborPos = loadVec3(OFFSET_CURR_POS, neighborIndex);
-        if(length(currPos - neighborPos) > PushConstants.smoothingRadius){
+        float dist = length(currPos - neighborPos);
+        if(dist > PushConstants.smoothingRadius){
             continue;
         }
         float neighborLambda = loadFloat(OFFSET_LAMBDAS, neighborIndex);
-        vec3 grad = gradientKernel(length(currPos - neighborPos)) * normalize(currPos - neighborPos);
+        vec3 grad = gradientKernel(dist) * normalize(currPos - neighborPos);
 
-        delta += ((currLambda + neighborLambda) * grad);
+        delta += ((currLambda + neighborLambda + scorr(dist)) * grad);
     }
     delta /= PushConstants.restDensity;
     storeVec3(OFFSET_DELTA, index, delta);
