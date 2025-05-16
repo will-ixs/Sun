@@ -56,12 +56,20 @@ void Engine::cleanup(){
     drawImage->destroy();
     depthImage->destroy();
 
-    rectangle.vertexBuffer->destroy();
-    rectangle.indexBuffer->destroy();
     for(MeshAsset& mesh : testMeshes){
         mesh.data.indexBuffer->destroy();
         mesh.data.vertexBuffer->destroy();
     }
+
+    uboBuffer->destroy();
+
+    whiteImage->destroy();
+    grayImage->destroy();
+    blackImage->destroy();
+    checkerboardImage->destroy();
+
+    vkDestroySampler(m_device, defaultLinearSampler, nullptr);
+    vkDestroySampler(m_device, defaultNearestSampler, nullptr);
 
     vmaDestroyAllocator(m_allocator);
 
@@ -76,9 +84,8 @@ void Engine::cleanup(){
 
     cleanedUp = true;
 }
-//TODO
-//Simple materials
-//Input manage, cam -> shared_ptr
+
+
 void Engine::init(){
     cleanedUp = false;
     initSDL3();
@@ -100,7 +107,6 @@ void Engine::init(){
     initData();
 
     initializationTime = SDL_GetTicksNS();
-    cam = std::make_unique<Camera>((float)drawExtent.width, (float)drawExtent.height);
 }
 //Initialization
 void Engine::initSDL3(){
@@ -113,7 +119,8 @@ void Engine::initSDL3(){
     
     SDL_Init(SdlInitFlags);
     m_pWindow = SDL_CreateWindow("Engine", 1600, 900, SdlWindowFlags);
-    SDL_SetWindowRelativeMouseMode(m_pWindow, true);
+    mouseCaptured = false;
+    SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
 }
 
 void Engine::initVulkan(){
@@ -321,6 +328,7 @@ void Engine::initDescriptors(){
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, STORAGE_COUNT},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SAMPLER_COUNT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, IMAGE_COUNT},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     
     VkDescriptorPoolCreateInfo descriptorPoolInfo = {
@@ -352,11 +360,18 @@ void Engine::initDescriptors(){
         .descriptorCount = IMAGE_COUNT,
         .stageFlags = VK_SHADER_STAGE_ALL
     };
+    VkDescriptorSetLayoutBinding uniforms = {
+        .binding = UBO_BINDING,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_ALL
+    };
 
     std::vector<VkDescriptorBindingFlags> bindingFlags = {
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        0
     };
     VkDescriptorSetLayoutBindingFlagsCreateInfo layoutBindingFlags = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
@@ -366,7 +381,7 @@ void Engine::initDescriptors(){
     };
 
     std::vector<VkDescriptorSetLayoutBinding> bindings = {
-        storage, sampler, images
+        storage, sampler, images, uniforms
     };
     VkDescriptorSetLayoutCreateInfo layoutInfo = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -447,31 +462,94 @@ void Engine::initMeshPipeline(){
 }
 
 void Engine::initData(){
-    std::array<Vertex,4> rectVerts;
-
-	rectVerts[0].position = {0.5,-0.5, 0};
-	rectVerts[1].position = {0.5,0.5, 0};
-	rectVerts[2].position = {-0.5,-0.5, 0};
-	rectVerts[3].position = {-0.5,0.5, 0};
-
-	rectVerts[0].color = {0,0, 0,1};
-	rectVerts[1].color = { 0.5,0.5,0.5 ,1};
-	rectVerts[2].color = { 1,0, 0,1 };
-	rectVerts[3].color = { 0,1, 0,1 };
-
-	std::array<uint32_t,6> rectIndices;
-
-	rectIndices[0] = 0;
-	rectIndices[1] = 1;
-	rectIndices[2] = 2;
-
-	rectIndices[3] = 2;
-	rectIndices[4] = 1;
-	rectIndices[5] = 3;
-
-	rectangle = uploadMesh(rectIndices,rectVerts);
     
     MeshLoader::loadGltfMeshes(this, testMeshes, "..\\..\\resources\\basicmesh.glb");
+    
+    cam = std::make_unique<Camera>((float)drawExtent.width, (float)drawExtent.height);
+
+    //Create UBO Buffer
+    uboBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+    ubo.view = cam->getViewMatrix();
+    ubo.proj = cam->getProjMatrix();
+    ubo.viewproj = glm::mat4(1.0f) * ubo.proj * ubo.view;
+    ubo.ambientColor = glm::vec4(0.2f, 0.2f, 0.2f, 0.2f);
+    ubo.sunlightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    ubo.sunlightDirection = glm::vec4(0.0f, -1.0f, 0.0f, 0.0f);
+
+    memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
+    
+    //Create default textures
+    uint32_t white =    glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
+    uint32_t gray =     glm::packUnorm4x8(glm::vec4(0.66f, 0.66f, 0.66f, 1));
+	uint32_t black =    glm::packUnorm4x8(glm::vec4(0, 0, 0, 0));	
+	uint32_t magenta =  glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
+	std::array<uint32_t, 16 *16 > pixels;
+	for (int x = 0; x < 16; x++) {
+		for (int y = 0; y < 16; y++) {
+			pixels[y*16 + x] = ((x % 2) ^ (y % 2)) ? magenta : black;
+		}
+	}
+
+	whiteImage =        createImageFromData((void*)&white, VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+	grayImage =         createImageFromData((void*)&gray , VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+	blackImage =        createImageFromData((void*)&black, VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+	checkerboardImage = createImageFromData(pixels.data(), VkExtent3D{16, 16, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+
+    //Create texture samplers
+    VkSamplerCreateInfo sampler = {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .pNext = nullptr,
+        .magFilter = VK_FILTER_NEAREST,
+        .minFilter = VK_FILTER_NEAREST
+    };
+	vkCreateSampler(m_device, &sampler, nullptr, &defaultNearestSampler);
+	sampler.magFilter = VK_FILTER_LINEAR;
+	sampler.minFilter = VK_FILTER_LINEAR;
+	vkCreateSampler(m_device, &sampler, nullptr, &defaultLinearSampler);
+
+    
+    //Update descriptors
+    VkDescriptorImageInfo samplerInfo = {
+        .sampler = defaultNearestSampler, 
+        .imageView = checkerboardImage->view,
+        .imageLayout = checkerboardImage->layout
+    };
+
+    VkDescriptorBufferInfo uboInfo = {
+        .buffer = uboBuffer->buffer,
+        .offset = 0,
+        .range = sizeof(UniformBufferObject)
+    };
+
+    VkWriteDescriptorSet samplerWrite {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr, 
+        .dstSet = m_descriptorSet,
+        .dstBinding = SAMPLER_BINDING,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &samplerInfo,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr
+    };
+    VkWriteDescriptorSet uboWrite {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr, 
+        .dstSet = m_descriptorSet,
+        .dstBinding = UBO_BINDING,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .pImageInfo = nullptr,
+        .pBufferInfo = &uboInfo,
+        .pTexelBufferView = nullptr
+    };
+
+    vkUpdateDescriptorSets(m_device, 1, &samplerWrite, 0, nullptr);
+    vkUpdateDescriptorSets(m_device, 1, &uboWrite, 0, nullptr);
 }
 
 //Utility
@@ -498,6 +576,47 @@ bool Engine::loadShader(VkShaderModule* outShader, const char* filePath) {
         return false;
     }
     return true;
+}
+
+std::unique_ptr<Image> Engine::createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped){
+    size_t dataSize = size.depth * size.width * size.height * sizeof(float);
+    VkBufferUsageFlags stagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    Buffer stagingBuffer = Buffer(m_device, m_allocator, dataSize, stagingUsage, 
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+	if (stagingBuffer.allocationInfo.pMappedData == nullptr) {
+		throw std::runtime_error("Staging buffer not mapped.");
+	}
+	memcpy(stagingBuffer.allocationInfo.pMappedData, data, dataSize);
+
+    std::unique_ptr<Image> image = std::make_unique<Image>(m_device, m_allocator, size, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 
+        VK_IMAGE_ASPECT_COLOR_BIT, 0);
+
+
+    prepImmediateTransfer();
+    
+    image->transitionTo(m_immTransfer.buffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
+
+    VkBufferImageCopy copyRegion = {
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageExtent = size
+    };
+    copyRegion.imageSubresource = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .mipLevel = 0,
+        .baseArrayLayer = 0,
+        .layerCount = 1
+    };
+    vkCmdCopyBufferToImage(m_immTransfer.buffer, stagingBuffer.buffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+    
+    image->transitionTo(m_immTransfer.buffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
+
+	submitImmediateTransfer();
+
+    stagingBuffer.destroy();
+	return image;
 }
 
 MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices){
@@ -551,6 +670,17 @@ MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> verti
     stagingBuffer->destroy();
 	return mesh;
 }
+
+void Engine::updateScene(){
+    cam->update();
+
+    ubo.view = cam->getViewMatrix();
+    ubo.proj = cam->getProjMatrix();
+    ubo.viewproj = glm::mat4(1.0f) * ubo.proj * ubo.view;
+
+    memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
+}
+
 //Transfer
 void Engine::prepImmediateTransfer(){
     vkResetFences(m_device, 1, &m_immTransfer.fence);
@@ -587,6 +717,8 @@ void Engine::submitImmediateTransfer(){
 
 //Drawing
 void Engine::draw(){
+    updateScene();
+
     VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, VK_TRUE, 1000000000);
     if (fenceResult != VK_SUCCESS) {
         throw std::runtime_error("Fence wait failed!");
@@ -756,6 +888,7 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
 	
     pcs.worldMatrix = cam->getRenderMatrix();
 	pcs.vertexBuffer = testMeshes.at(2).data.vertexBufferAddress;
+    pcs.materialIndex = 0;
     
 	vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
 	vkCmdBindIndexBuffer(cmd, testMeshes.at(2).data.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -772,6 +905,7 @@ void Engine::run(){
         uint64_t currentTime = SDL_GetTicksNS() - initializationTime;
         deltaTime = currentTime - lastTime;
         while(SDL_PollEvent(&e) != 0){
+            cam->processSDLEvent(e);
             switch (e.type)
             {
             case SDL_EVENT_QUIT:
@@ -784,63 +918,23 @@ void Engine::run(){
                 //stopRendering = false;
                 break;
             case SDL_EVENT_KEY_DOWN:
-            {
-                switch(e.key.key){
-                    case SDLK_ESCAPE:
-                        quit = true;
-                        break;
-                    case SDLK_Q:
-                        mouseCaptured = !mouseCaptured;
-                        SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
-                        break;
-                    case SDLK_W:
-                        cam->updateVelocity(glm::vec3(0.0f, 0.0f, 1.0f));
-                        break;
-                    case SDLK_S:
-                        cam->updateVelocity(glm::vec3(0.0f, 0.0f, -1.0f));
-                        break;
-                    case SDLK_A:
-                        cam->updateVelocity(glm::vec3(-1.0f, 0.0f, 0.0f));
-                        break;
-                    case SDLK_D:
-                        cam->updateVelocity(glm::vec3(1.0f, 0.0f, 0.0f));
-                        break;
+                switch (e.key.key)
+                {
+                case SDLK_ESCAPE:
+                    quit = true;
+                    break;
+                case SDLK_Q:
+                    mouseCaptured = !mouseCaptured;
+                    SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
+                    break;
+                default:
+                    break;
                 }
-                break;
-            }
-            case SDL_EVENT_KEY_UP:
-            {
-                switch(e.key.key){
-                    case SDLK_ESCAPE:
-                        quit = true;
-                        break;
-                    case SDLK_W:
-                        cam->updateVelocity(glm::vec3(0.0f, 0.0f, -1.0f));
-                        break;
-                    case SDLK_S:
-                        cam->updateVelocity(glm::vec3(0.0f, 0.0f, 1.0f));
-                        break;
-                    case SDLK_A:
-                        cam->updateVelocity(glm::vec3(1.0f, 0.0f, 0.0f));
-                        break;
-                    case SDLK_D:
-                        cam->updateVelocity(glm::vec3(-1.0f, 0.0f, 0.0f));
-                        break;
-                }
-                break;
-            }
-            case SDL_EVENT_MOUSE_MOTION:
-            {
-                if(mouseCaptured){
-                    cam->updateLook(e.motion.xrel, e.motion.yrel);
-                }
-                break;
-            }
             default:
                 break;
             }
+            
         }
-        cam->updatePosition(deltaTime);
 
         //stopRendering
             //continue

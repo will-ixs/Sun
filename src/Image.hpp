@@ -1,6 +1,8 @@
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 
+class Buffer;
+
 class Image
 {
 private:
@@ -27,8 +29,6 @@ public:
     void createImageView();
     void destroy();
 
-    void transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout, bool isTransfer = false);
     void copyTo(VkCommandBuffer cmd, Image& dstImage);
-
-    static void transitionVulkanImage(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 };

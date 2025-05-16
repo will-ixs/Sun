@@ -1,8 +1,20 @@
 #version 450
 #extension GL_EXT_buffer_reference : require
 
-layout (location = 0) out vec3 outColor;
-layout (location = 1) out vec2 outUV;
+struct Material{
+	vec4 baseColor;
+    float metallicFactor;
+    float roughnessFactor;
+
+    uint baseColorIndex;
+    uint metallicRoughnessIndex;
+    uint normalIndex;
+};
+
+layout(buffer_reference, std430) readonly buffer MaterialBuffer{ 
+	Material materials[];
+};
+
 
 struct Vertex {
 	vec3 position;
@@ -16,14 +28,27 @@ layout(buffer_reference, std430) readonly buffer VertexBuffer{
 	Vertex vertices[];
 };
 
-//push constants block
+layout(binding = 3) uniform  SceneData{   
+
+	mat4 view;
+	mat4 proj;
+	mat4 viewproj;
+	vec4 ambientColor;
+	vec4 sunlightDirection; //w for sun power
+	vec4 sunlightColor;
+	MaterialBuffer matBuffer;
+} sceneData;
+
 layout( push_constant ) uniform constants
 {	
 	mat4 render_matrix;
 	VertexBuffer vertexBuffer;
-    uint textureIndex;
     uint materialIndex;
 } PushConstants;
+
+layout (location = 0) out vec3 outColor;
+layout (location = 1) out vec2 outUV;
+layout (location = 2) flat out uint matIndex;
 
 void main() 
 {	
@@ -34,4 +59,5 @@ void main()
 	outColor = v.color.xyz;
 	outUV.x = v.uv_x;
 	outUV.y = v.uv_y;
+	matIndex = PushConstants.materialIndex;
 }

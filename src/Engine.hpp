@@ -34,9 +34,12 @@ private:
 
     //Util
     bool loadShader(VkShaderModule* outShader, const char* filePath);
+    // bool loadImage(float* outData, const char* filePath);
+    std::unique_ptr<Image> createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped);
     ImmediateTransfer m_immTransfer;
     void prepImmediateTransfer();
     void submitImmediateTransfer();
+    void updateScene();
 
     //Pipelines
     void initMeshPipeline();
@@ -72,6 +75,7 @@ private:
     const uint32_t STORAGE_BINDING = 0;
     const uint32_t SAMPLER_BINDING = 1;
     const uint32_t IMAGE_BINDING = 2;
+    const uint32_t UBO_BINDING = 3;
     uint32_t STORAGE_COUNT = 65536;
     uint32_t SAMPLER_COUNT = 65536;
     uint32_t IMAGE_COUNT = 65536;
@@ -88,14 +92,22 @@ private:
 	uint32_t m_transferQueueFamily;
 
     //Draw Resources
+    std::unique_ptr<Image> whiteImage;
+    std::unique_ptr<Image> blackImage;
+    std::unique_ptr<Image> grayImage;
+    std::unique_ptr<Image> checkerboardImage;
+    VkSampler defaultLinearSampler;
+    VkSampler defaultNearestSampler;
+
     std::unique_ptr<Image> drawImage;
     std::unique_ptr<Image> depthImage;
     VkExtent2D drawExtent; 
 
-    MeshData rectangle;
     std::vector<MeshAsset> testMeshes;
-
     std::unique_ptr<Camera> cam;
+
+    UniformBufferObject ubo;
+    std::unique_ptr<Buffer> uboBuffer;
 
     bool cleanedUp;
     bool mouseCaptured = true;

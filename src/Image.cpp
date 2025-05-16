@@ -1,17 +1,18 @@
 #include "Image.hpp"
 #include <stdexcept>
 
-Image::Image(VkDevice device, VmaAllocator allocator, VkExtent3D imgExtent, VkFormat imgFormat, 
-    VkImageUsageFlags usage, VkImageAspectFlags imgAspect, VmaAllocationCreateFlags vmaAllocFlags)
+Image::Image(VkDevice device, VmaAllocator allocator, VkExtent3D imageExtent, VkFormat imageFormat, 
+    VkImageUsageFlags usage, VkImageAspectFlags imageAspect, VmaAllocationCreateFlags vmaAllocFlags)
 :
-m_device(device), m_allocator(allocator), extent(imgExtent), format(imgFormat), aspect(imgAspect)
+m_device(device), m_allocator(allocator), extent(imageExtent), format(imageFormat), aspect(imageAspect)
 {
     createImage(usage, vmaAllocFlags);
     createImageView();
 }
 
 
-Image::Image(VkDevice device, VkImage image, VkImageView imageView, VkExtent3D imageExtent, VkFormat imageFormat, VkImageAspectFlags imageAspect, bool swapchainImage = false)
+Image::Image(VkDevice device, VkImage image, VkImageView imageView, VkExtent3D imageExtent, VkFormat imageFormat, 
+    VkImageAspectFlags imageAspect, bool swapchainImage = false)
 :
 m_device(device), image(image), view(imageView), extent(imageExtent), format(imageFormat), m_swapchain(swapchainImage), aspect(imageAspect)
 {
@@ -55,7 +56,6 @@ void Image::createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAll
 }
 
 void Image::createImageView(){
-
     VkImageSubresourceRange imageRange = {
         .aspectMask = aspect,
         .baseMipLevel = 0,
@@ -96,7 +96,7 @@ void Image::destroy(){
     cleanedUp = true;
 }
 
-void Image::transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout){
+void Image::transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLayout newLayout, bool isTransfer){
     layout = newLayout;
     VkImageSubresourceRange range = {
         .aspectMask = aspect,
@@ -140,42 +140,41 @@ void Image::transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLa
             throw std::runtime_error("Unsupported oldLayout transition!");
     }
 
-    switch (newLayout) {
-        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            break;
-        default:
-            throw std::runtime_error("Unsupported newLayout transition!");
+    if(isTransfer){
+        imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+        imageBarrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    }else{
+        switch (newLayout) {
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+                imageBarrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+                imageBarrier.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+                imageBarrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+                imageBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+                imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
+                imageBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
+                imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+                imageBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                break;
+            default:
+                throw std::runtime_error("Unsupported newLayout transition!");
+        }
     }
 
-    /*
-    debugging - uber barrier
-    */
-//    imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-//    imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-//    imageBarrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-//    imageBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    
 
     VkDependencyInfo dependencyInfo{
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -228,81 +227,4 @@ void Image::copyTo(VkCommandBuffer cmd, Image& dstImage){
     };
 
 	vkCmdBlitImage2(cmd, &blitInfo);
-}
-
-void Image::transitionVulkanImage(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout){
-    VkImageSubresourceRange range = {
-        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-        .baseMipLevel = 0,
-        .levelCount = VK_REMAINING_MIP_LEVELS,
-        .baseArrayLayer = 0,
-        .layerCount = VK_REMAINING_ARRAY_LAYERS        
-    };
-    
-    VkImageMemoryBarrier2 imageBarrier{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .pNext = nullptr,
-        .oldLayout = oldLayout,
-        .newLayout = newLayout,
-        .image = image,
-        .subresourceRange = range
-    };
-
-    switch (oldLayout) {
-        case VK_IMAGE_LAYOUT_UNDEFINED:
-            imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
-            imageBarrier.srcAccessMask = 0;
-            break;
-        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-            imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-            imageBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-            imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-            imageBarrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-            imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-            imageBarrier.srcAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
-            imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-            imageBarrier.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            break;
-        default:
-            throw std::runtime_error("Unsupported oldLayout transition!");
-    }
-
-    switch (newLayout) {
-        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
-            break;
-        case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
-            imageBarrier.dstAccessMask = 0;
-            break;
-        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
-            imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-            imageBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            break;
-        default:
-            throw std::runtime_error("Unsupported newLayout transition!");
-    }
-
-    VkDependencyInfo dependencyInfo{
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .pNext = nullptr,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &imageBarrier
-    };
-    vkCmdPipelineBarrier2(cmd, &dependencyInfo);
 }
