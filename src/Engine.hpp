@@ -8,6 +8,7 @@
 #include <array>
 #include <span>
 #include <memory>
+#include <unordered_map>
 #include <SDL3/SDL_timer.h>
 #include "types.h"
 
@@ -33,13 +34,15 @@ private:
     void initData();
 
     //Util
-    bool loadShader(VkShaderModule* outShader, const char* filePath);
-    // bool loadImage(float* outData, const char* filePath);
-    std::unique_ptr<Image> createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped);
     ImmediateTransfer m_immTransfer;
     void prepImmediateTransfer();
     void submitImmediateTransfer();
+    
+    bool loadShader(VkShaderModule* outShader, const char* filePath);
+    // bool loadImage(float* outData, const char* filePath);
+    std::unique_ptr<Image> createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped);
     void updateScene();
+    uint32_t addMaterial(MaterialData data, std::string name);
 
     //Pipelines
     void initMeshPipeline();
@@ -92,13 +95,6 @@ private:
 	uint32_t m_transferQueueFamily;
 
     //Draw Resources
-    std::unique_ptr<Image> whiteImage;
-    std::unique_ptr<Image> blackImage;
-    std::unique_ptr<Image> grayImage;
-    std::unique_ptr<Image> checkerboardImage;
-    VkSampler defaultLinearSampler;
-    VkSampler defaultNearestSampler;
-
     std::unique_ptr<Image> drawImage;
     std::unique_ptr<Image> depthImage;
     VkExtent2D drawExtent; 
@@ -106,8 +102,26 @@ private:
     std::vector<MeshAsset> testMeshes;
     std::unique_ptr<Camera> cam;
 
+    //Buffers
     UniformBufferObject ubo;
     std::unique_ptr<Buffer> uboBuffer;
+    
+    //Materials
+    std::vector<MaterialData> materials;
+    std::unordered_map<std::string, uint32_t> matNameToMatIndex;
+    std::unique_ptr<Buffer> materialBuffer;
+    VkDeviceAddress materialBufferAddress;
+    
+    //Textures
+    std::vector<TextureData> textures;
+    std::unordered_map<std::string, uint32_t> fileNameToTexIndex;
+
+    std::unique_ptr<Image> whiteImage;
+    std::unique_ptr<Image> blackImage;
+    std::unique_ptr<Image> grayImage;
+    std::unique_ptr<Image> checkerboardImage;
+    VkSampler defaultLinearSampler;
+    VkSampler defaultNearestSampler;
 
     bool cleanedUp;
     bool mouseCaptured = true;

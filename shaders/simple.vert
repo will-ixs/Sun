@@ -41,23 +41,25 @@ layout(binding = 3) uniform  SceneData{
 
 layout( push_constant ) uniform constants
 {	
-	mat4 render_matrix;
+	mat4 modelMatrix;
 	VertexBuffer vertexBuffer;
     uint materialIndex;
 } PushConstants;
 
 layout (location = 0) out vec3 outColor;
 layout (location = 1) out vec2 outUV;
-layout (location = 2) flat out uint matIndex;
+layout (location = 2) out vec3 outNormal;
 
 void main() 
 {	
 	Vertex v = PushConstants.vertexBuffer.vertices[gl_VertexIndex];
+	Material mat = sceneData.matBuffer.materials[PushConstants.materialIndex];
+	
+	vec4 position = vec4(v.position, 1.0);
+	gl_Position = sceneData.viewproj * PushConstants.modelMatrix * vec4(v.position, 1.0f);
 
-	//output data
-	gl_Position = PushConstants.render_matrix * vec4(v.position, 1.0f);
-	outColor = v.color.xyz;
 	outUV.x = v.uv_x;
 	outUV.y = v.uv_y;
-	matIndex = PushConstants.materialIndex;
+	outNormal = (PushConstants.modelMatrix * vec4(v.normal, 0.f)).xyz;
+	outColor = v.color.xyz * mat.baseColor.xyz;	
 }

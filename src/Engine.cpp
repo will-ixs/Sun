@@ -62,6 +62,7 @@ void Engine::cleanup(){
     }
 
     uboBuffer->destroy();
+    materialBuffer->destroy();
 
     whiteImage->destroy();
     grayImage->destroy();
@@ -474,11 +475,25 @@ void Engine::initData(){
     ubo.view = cam->getViewMatrix();
     ubo.proj = cam->getProjMatrix();
     ubo.viewproj = glm::mat4(1.0f) * ubo.proj * ubo.view;
-    ubo.ambientColor = glm::vec4(0.2f, 0.2f, 0.2f, 0.2f);
-    ubo.sunlightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    ubo.ambientColor = glm::vec4(0.2f, 0.2f, 0.2f, 1.0f);
+    ubo.sunlightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f); //w is sunlight intensity
     ubo.sunlightDirection = glm::vec4(0.0f, -1.0f, 0.0f, 0.0f);
 
     memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
+    
+    // mateiralBuffer
+    materials.reserve(32);
+    VkBufferUsageFlags materialUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    materialBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(MaterialData) * materials.capacity(), 
+        materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+
+    VkBufferDeviceAddressInfo bdaInfo {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = materialBuffer->buffer
+    };
+    materialBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
+
     
     //Create default textures
     uint32_t white =    glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
@@ -550,6 +565,17 @@ void Engine::initData(){
 
     vkUpdateDescriptorSets(m_device, 1, &samplerWrite, 0, nullptr);
     vkUpdateDescriptorSets(m_device, 1, &uboWrite, 0, nullptr);
+
+    MaterialData baseMaterial{
+        .baseColor = glm::vec4(1.0f),
+        .metallicFactor = 0.2f,
+        .roughnessFactor = 0.2f,
+        .baseColorIndex = 0,
+        .metallicRoughnessIndex = 0,
+        .normalIndex = 0
+    };
+    addMaterial(baseMaterial, "BASE");
+
 }
 
 //Utility
@@ -677,9 +703,72 @@ void Engine::updateScene(){
     ubo.view = cam->getViewMatrix();
     ubo.proj = cam->getProjMatrix();
     ubo.viewproj = glm::mat4(1.0f) * ubo.proj * ubo.view;
+    ubo.materialBuffer = materialBufferAddress;
 
     memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
 }
+
+uint32_t Engine::addMaterial(MaterialData data, std::string name){
+    if(matNameToMatIndex.find(name) != matNameToMatIndex.end()){
+        return matNameToMatIndex.at(name);
+    }
+    //Check if this material will cause buffer to resize
+    bool willResize = false;
+    if(materials.size() == materials.capacity()){
+        willResize = true;
+    }
+
+    //Point staging copy to where next element will be pushed to
+	VkBufferCopy stagingCopy = {
+        .srcOffset = materials.size() * sizeof(MaterialData),
+        .dstOffset = materials.size() * sizeof(MaterialData),
+        .size = sizeof(MaterialData)
+    };
+
+    //Push next element into spot it'll be read
+    materials.push_back(data);
+    uint32_t index = (uint32_t)materials.size();
+    matNameToMatIndex.insert({name, index});
+    
+    //If that push is going to cause a resize, resize the destination buffer then copy the whole buffer over 
+    if(willResize){
+        stagingCopy.srcOffset = 0;
+        stagingCopy.dstOffset = 0;
+        stagingCopy.size = materials.capacity() * sizeof(MaterialData);
+
+
+        materialBuffer->destroy();
+    
+        VkBufferUsageFlags materialUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        
+        materialBuffer = std::make_unique<Buffer>(m_device, m_allocator, materials.capacity() * sizeof(MaterialData), 
+            materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+
+        VkBufferDeviceAddressInfo bdaInfo {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+            .pNext = nullptr,
+            .buffer = materialBuffer->buffer
+        };
+        materialBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
+    }    
+    
+    Buffer stagingBuffer = Buffer(m_device, m_allocator, materials.capacity() * sizeof(MaterialData), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+	if (stagingBuffer.allocationInfo.pMappedData == nullptr) {
+		throw std::runtime_error("Material staging buffer not mapped.");
+	}
+
+	memcpy(stagingBuffer.allocationInfo.pMappedData, materials.data(), materials.size() * sizeof(MaterialData));
+	prepImmediateTransfer();
+
+	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer.buffer, materialBuffer->buffer, 1, &stagingCopy);
+
+    submitImmediateTransfer();
+
+    return index;
+}
+
+
 
 //Transfer
 void Engine::prepImmediateTransfer(){
@@ -882,13 +971,12 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     //     vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
     // }
     
-    // glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 2.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-	// glm::mat4 projection = glm::perspectiveFovZO(glm::radians(70.0f), (float)drawExtent.width, (float)drawExtent.height, 500.0f, 0.001f);	
-    // projection[1][1] *= -1;
 	
-    pcs.worldMatrix = cam->getRenderMatrix();
-	pcs.vertexBuffer = testMeshes.at(2).data.vertexBufferAddress;
+    // pcs.modelMatrix = testMeshes.at(2).data.modelMat;
+    // pcs.materialIndex = testMeshes.at(2).surfaces.at(0).matIndex;
+    pcs.modelMatrix = glm::mat4(1.0f);
     pcs.materialIndex = 0;
+	pcs.vertexBuffer = testMeshes.at(2).data.vertexBufferAddress;
     
 	vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
 	vkCmdBindIndexBuffer(cmd, testMeshes.at(2).data.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);

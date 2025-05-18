@@ -103,9 +103,9 @@ bool MeshLoader::loadGltfMeshes(Engine* engine, std::vector<MeshAsset>& meshesOu
         }
 
         // display the vertex normals
-        for (Vertex& vert : vertices) {
-            vert.color = glm::vec4(vert.normal, 1.f);
-        }
+        // for (Vertex& vert : vertices) {
+        //     vert.color = glm::vec4(vert.normal, 1.f);
+        // }
 
         newMesh.data = engine->uploadMesh(indices, vertices);
 

@@ -28,7 +28,7 @@ struct ImmediateTransfer{
 };
 
 struct PushConstants{
-    glm::mat4 worldMatrix;
+    glm::mat4 modelMatrix;
     VkDeviceAddress vertexBuffer;
     uint32_t materialIndex;
 };
@@ -67,7 +67,7 @@ struct MaterialData{
 struct Surface {
     uint32_t startIndex;
     uint32_t count;
-    MaterialData matData;
+    uint32_t matIndex;
 };
 
 struct MeshAsset {
@@ -77,7 +77,7 @@ struct MeshAsset {
 };
 
 struct GLTFNode{
-    uint32_t parent = -1;
+    int parent = -1;
     std::vector<uint32_t> childrenIndices;
     
     glm::mat4 modelMat;
