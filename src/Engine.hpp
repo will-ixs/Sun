@@ -6,8 +6,11 @@
 
 #include <vector>
 #include <array>
+#include <filesystem>
 #include <span>
 #include <memory>
+#include <thread>
+#include <queue>
 #include <unordered_map>
 #include <SDL3/SDL_timer.h>
 #include "types.h"
@@ -16,7 +19,7 @@ class Swapchain;
 class Image;
 class Buffer;
 class PipelineBuilder;
-class MeshUploader;
+// class MeshUploader;
 class Camera;
 
 class Engine
@@ -32,24 +35,36 @@ private:
     void initDescriptors();
     void initPipelines();
     void initData();
+    void initDearImGui();
 
     //Util
     ImmediateTransfer m_immTransfer;
+    EngineStats stats;
     void prepImmediateTransfer();
     void submitImmediateTransfer();
     
-    bool loadShader(VkShaderModule* outShader, const char* filePath);
-    // bool loadImage(float* outData, const char* filePath);
-    std::unique_ptr<Image> createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped);
+    bool loadShader(VkShaderModule* outShader, std::string filePath);
+    bool loadGLTF(std::filesystem::path filePath);
+    std::shared_ptr<Image> createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped);
     void updateScene();
-    uint32_t addMaterial(MaterialData data, std::string name);
+    void createRenderablesFromNode(std::shared_ptr<GLTFNode> node);
+
+    uint32_t addMaterial(const MaterialData& data, std::string name);
+    uint32_t addTexture(const TextureData& data, std::string name);
+    MaterialData getMatFromName(std::string name) { return materials.at(matNameToIndex.find(name)->second); };
+    TextureData getTexFromName(std::string name) { return textures.at(texNameToIndex.find(name)->second); };
+    
+    void meshUploader();
+    std::queue<std::filesystem::path> pathQueue;
+    std::thread meshThread;
 
     //Pipelines
-    void initMeshPipeline();
+    void initMeshPipelines();
 
     //drawing
     void draw();
     void drawMeshes(VkCommandBuffer cmd);
+    void drawDearImGui(VkCommandBuffer cmd, VkImageView view);
 
     //Optons
     bool m_bUseValidation = false;
@@ -71,6 +86,7 @@ private:
     std::unique_ptr<Swapchain> m_swapchain;
 
     //Descriptors
+    VkDescriptorPool m_ImguiPool;
     VkDescriptorPool m_descriptorPool;
     VkDescriptorSetLayout m_descriptorLayout;
     VkDescriptorSet m_descriptorSet;
@@ -85,7 +101,8 @@ private:
     
     //Pipelines
     VkPipelineLayout meshPipelineLayout;
-    VkPipeline meshPipeline;
+    VkPipeline meshPipelineOpaque;
+    VkPipeline meshPipelineTransparent;
     std::unique_ptr<PipelineBuilder> pb;
 
     //Queue Info
@@ -98,33 +115,38 @@ private:
     std::unique_ptr<Image> drawImage;
     std::unique_ptr<Image> depthImage;
     VkExtent2D drawExtent; 
-
+    std::vector<Renderable> opaqueRenderables;
+    std::vector<Renderable> transparentRenderables;
     std::vector<MeshAsset> testMeshes;
     std::unique_ptr<Camera> cam;
 
+    //Scenes
+    std::unordered_map<std::string, std::shared_ptr<GLTFScene>> loadedGLTFs;
     //Buffers
     UniformBufferObject ubo;
     std::unique_ptr<Buffer> uboBuffer;
     
     //Materials
     std::vector<MaterialData> materials;
-    std::unordered_map<std::string, uint32_t> matNameToMatIndex;
+    std::unordered_map<std::string, uint32_t> matNameToIndex;
     std::unique_ptr<Buffer> materialBuffer;
     VkDeviceAddress materialBufferAddress;
     
     //Textures
     std::vector<TextureData> textures;
-    std::unordered_map<std::string, uint32_t> fileNameToTexIndex;
+    std::unordered_map<std::string, uint32_t> texNameToIndex;
 
-    std::unique_ptr<Image> whiteImage;
-    std::unique_ptr<Image> blackImage;
-    std::unique_ptr<Image> grayImage;
-    std::unique_ptr<Image> checkerboardImage;
+    std::shared_ptr<Image> whiteImage;
+    std::shared_ptr<Image> blackImage;
+    std::shared_ptr<Image> grayImage;
+    std::shared_ptr<Image> checkerboardImage;
     VkSampler defaultLinearSampler;
     VkSampler defaultNearestSampler;
-
+    std::vector<VkWriteDescriptorSet> tempDescriptorWrites;
+    
     bool cleanedUp;
     bool mouseCaptured = true;
+    bool minimized = false;
     uint64_t initializationTime = 0;
     uint64_t deltaTime = 0;
     uint64_t lastTime = 0;

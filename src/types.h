@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <unordered_map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -54,7 +55,16 @@ struct TextureData {
     VkSampler sampler;
 };
 
-struct MaterialData{
+struct EngineStats {
+    float initTime;
+    float frameTime;
+    float sceneUpdateTime;
+    float meshDrawTime;
+    int triCount;
+    int drawCallCount;
+};
+
+struct alignas(16) MaterialData{
     glm::vec4 baseColor;
     float metallicFactor;
     float roughnessFactor;
@@ -64,7 +74,14 @@ struct MaterialData{
     uint32_t normalIndex;
 };
 
+enum RenderPass {
+    OPAQUE,
+    TRANSPARENT,
+    RenderPassSize
+};
+
 struct Surface {
+    RenderPass type;
     uint32_t startIndex;
     uint32_t count;
     uint32_t matIndex;
@@ -77,34 +94,41 @@ struct MeshAsset {
 };
 
 struct GLTFNode{
-    int parent = -1;
-    std::vector<uint32_t> childrenIndices;
+    std::weak_ptr<GLTFNode> parent;
+    std::vector<std::shared_ptr<GLTFNode> > children;
     
-    glm::mat4 modelMat;
-
-    glm::vec3 position;
-    glm::vec3 scale;
-    glm::quat rotation;
+    glm::mat4 localTransform;
+    glm::mat4 worldTransform;
 
     std::shared_ptr<MeshAsset> mesh;
+
+    void refreshTransform(const glm::mat4& parentMatrix)
+    {
+        worldTransform = parentMatrix * localTransform;
+        for (auto c : children) {
+            c->refreshTransform(worldTransform);
+        }
+    }
 };
 
 
 struct GLTFScene{
-    std::vector<GLTFNode> nodes;
-    std::vector<uint32_t> rootNodes;
-};
+    std::unordered_map<std::string, std::shared_ptr<MeshAsset>> meshes;
+    std::unordered_map<std::string, std::shared_ptr<GLTFNode>> nodes;
+    std::unordered_map<std::string, std::shared_ptr<Image>> images;
+    std::unordered_map<std::string, uint32_t> materialIndices;
 
-enum RenderPass {
-    OPAQUE,
-    TRANSPARENT,
-    RenderPassSize
+    std::vector<std::shared_ptr<GLTFNode>> topNodes;
+    std::vector<VkSampler> samplers;
 };
 
 struct Renderable{
-    RenderPass type;
-    uint32_t nodeIndex;
-    uint32_t surfaceIndex;
+    VkDeviceAddress vertexBufferAddress;
+    VkBuffer indexBuffer;
+    uint32_t indexCount;
+    uint32_t firstIndex;
+    uint32_t materialIndex;
+    glm::mat4 modelMat;
 };
 
 struct UniformBufferObject{

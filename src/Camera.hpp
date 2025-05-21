@@ -11,8 +11,7 @@ private:
 const glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
     glm::vec3 position;
     glm::vec3 velocity;    
-    float pitch { 0.f };
-    float yaw { 0.f };
+
     glm::vec3 forward;
     
     float zNear;
@@ -21,7 +20,8 @@ public:
     float fov;
     float viewportWidth;
     float viewportHeight;
-
+    float pitch { 0.f };
+    float yaw { 0.f };
     Camera();
     Camera(float width, float height);
     ~Camera();

@@ -4,14 +4,25 @@
 #include <SDL3/SDL_vulkan.h>
 #include <VkBootstrap.h>
 
+#include <imgui.h>
+#include <imgui_impl_sdl3.h>
+#include <imgui_impl_vulkan.h>
+
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include "../thirdparty/stb_image.h"
+
+#include <fastgltf/glm_element_traits.hpp>
+#include <fastgltf/core.hpp>
+#include <fastgltf/tools.hpp>
 
 #include <cmath>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <stdexcept>
+#include <variant>
 
 #include "Swapchain.hpp"
 #include "Camera.hpp"
@@ -36,12 +47,21 @@ Engine::~Engine()
 void Engine::cleanup(){
     vkDeviceWaitIdle(m_device);
 
+    meshThread.join();
+    
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+
     vkDestroyPipelineLayout(m_device, meshPipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, meshPipeline, nullptr);
+    vkDestroyPipeline(m_device, meshPipelineOpaque, nullptr);
+    vkDestroyPipeline(m_device, meshPipelineTransparent, nullptr);
 
+    
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+    vkDestroyDescriptorPool(m_device, m_ImguiPool, nullptr);
 	vkDestroyDescriptorSetLayout(m_device, m_descriptorLayout, nullptr);
-
+    
     for (int i = 0; i < 2; i++) {
         vkDestroyCommandPool(m_device, frameData[i].commandPool, nullptr);
 
@@ -59,6 +79,25 @@ void Engine::cleanup(){
     for(MeshAsset& mesh : testMeshes){
         mesh.data.indexBuffer->destroy();
         mesh.data.vertexBuffer->destroy();
+    }
+
+    for(auto& [sceneName, scene] : loadedGLTFs){
+        for(VkSampler sampler : scene->samplers){
+            vkDestroySampler(m_device, sampler, nullptr);
+        }
+        
+        for(auto& [meshName, mesh] : scene->meshes){
+            mesh->data.indexBuffer->destroy();
+            mesh->data.vertexBuffer->destroy();
+        }
+
+        for(auto& [imageName, image] : scene->images){
+            image->destroy();
+        }
+    }
+
+    for(const TextureData& td : textures){
+        td.texture->destroy();
     }
 
     uboBuffer->destroy();
@@ -107,7 +146,10 @@ void Engine::init(){
 
     initData();
 
+    initDearImGui();
+
     initializationTime = SDL_GetTicksNS();
+    stats.initTime = (float)initializationTime / 1e6f;
 }
 //Initialization
 void Engine::initSDL3(){
@@ -119,9 +161,10 @@ void Engine::initSDL3(){
     SdlWindowFlags |= SDL_WINDOW_RESIZABLE;
     
     SDL_Init(SdlInitFlags);
-    m_pWindow = SDL_CreateWindow("Engine", 1600, 900, SdlWindowFlags);
+    m_pWindow = SDL_CreateWindow("Sun", 1600, 900, SdlWindowFlags);
     mouseCaptured = false;
     SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
+    SDL_CaptureMouse(mouseCaptured);
 }
 
 void Engine::initVulkan(){
@@ -407,10 +450,10 @@ void Engine::initDescriptors(){
 
 void Engine::initPipelines(){
     pb = std::make_unique<PipelineBuilder>();
-    initMeshPipeline();    
+    initMeshPipelines();    
 }
 
-void Engine::initMeshPipeline(){
+void Engine::initMeshPipelines(){
     VkShaderModule frag;
 	if (!loadShader(&frag, "../shaders/simple.frag.spv")) {
 		std::cout << "Error when building the triangle fragment shader module" << std::endl;
@@ -456,44 +499,43 @@ void Engine::initMeshPipeline(){
     // pb->disableDepthtest();
 	pb->setColorAttachmentFormat(drawImage->format);
 	pb->setDepthAttachmentFormat(depthImage->format);
-	meshPipeline = pb->buildPipeline(m_device);
+	meshPipelineOpaque = pb->buildPipeline(m_device);
+
+    pb->enableBlending(VK_BLEND_FACTOR_ONE);
+    meshPipelineTransparent = pb->buildPipeline(m_device);
 
 	vkDestroyShaderModule(m_device, vert, nullptr);
 	vkDestroyShaderModule(m_device, frag, nullptr);
 }
 
 void Engine::initData(){
-    
-    MeshLoader::loadGltfMeshes(this, testMeshes, "..\\..\\resources\\basicmesh.glb");
-    
     cam = std::make_unique<Camera>((float)drawExtent.width, (float)drawExtent.height);
-
+    
     //Create UBO Buffer
     uboBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
-        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-
+    VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    
     ubo.view = cam->getViewMatrix();
     ubo.proj = cam->getProjMatrix();
     ubo.viewproj = glm::mat4(1.0f) * ubo.proj * ubo.view;
     ubo.ambientColor = glm::vec4(0.2f, 0.2f, 0.2f, 1.0f);
     ubo.sunlightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f); //w is sunlight intensity
     ubo.sunlightDirection = glm::vec4(0.0f, -1.0f, 0.0f, 0.0f);
-
+    
     memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
     
     // mateiralBuffer
     materials.reserve(32);
     VkBufferUsageFlags materialUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     materialBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(MaterialData) * materials.capacity(), 
-        materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
-
+    materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+    
     VkBufferDeviceAddressInfo bdaInfo {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
         .pNext = nullptr,
         .buffer = materialBuffer->buffer
     };
     materialBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
-
     
     //Create default textures
     uint32_t white =    glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
@@ -502,16 +544,16 @@ void Engine::initData(){
 	uint32_t magenta =  glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
 	std::array<uint32_t, 16 *16 > pixels;
 	for (int x = 0; x < 16; x++) {
-		for (int y = 0; y < 16; y++) {
-			pixels[y*16 + x] = ((x % 2) ^ (y % 2)) ? magenta : black;
+        for (int y = 0; y < 16; y++) {
+            pixels[y*16 + x] = ((x % 2) ^ (y % 2)) ? magenta : black;
 		}
 	}
-
+    
 	whiteImage =        createImageFromData((void*)&white, VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
 	grayImage =         createImageFromData((void*)&gray , VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
 	blackImage =        createImageFromData((void*)&black, VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
 	checkerboardImage = createImageFromData(pixels.data(), VkExtent3D{16, 16, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
-
+    
     //Create texture samplers
     VkSamplerCreateInfo sampler = {
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -524,31 +566,22 @@ void Engine::initData(){
 	sampler.minFilter = VK_FILTER_LINEAR;
 	vkCreateSampler(m_device, &sampler, nullptr, &defaultLinearSampler);
 
+    TextureData texData = {
+        .texture = checkerboardImage,
+        .sampler = defaultNearestSampler
+    };
+    // addTexture(texData, "CHECKERBOARD");
+    meshThread = std::thread(&Engine::meshUploader, this);
+    pathQueue.push("..\\..\\resources\\main1_sponza\\NewSponza_Main_glTF_003.gltf");
+    pathQueue.push("..\\..\\resources\\main1_sponza\\NewSponza_Curtains_glTF.gltf");
+    pathQueue.push("QUIT");   
+
     
     //Update descriptors
-    VkDescriptorImageInfo samplerInfo = {
-        .sampler = defaultNearestSampler, 
-        .imageView = checkerboardImage->view,
-        .imageLayout = checkerboardImage->layout
-    };
-
     VkDescriptorBufferInfo uboInfo = {
         .buffer = uboBuffer->buffer,
         .offset = 0,
         .range = sizeof(UniformBufferObject)
-    };
-
-    VkWriteDescriptorSet samplerWrite {
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .pNext = nullptr, 
-        .dstSet = m_descriptorSet,
-        .dstBinding = SAMPLER_BINDING,
-        .dstArrayElement = 0,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .pImageInfo = &samplerInfo,
-        .pBufferInfo = nullptr,
-        .pTexelBufferView = nullptr
     };
     VkWriteDescriptorSet uboWrite {
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -562,31 +595,57 @@ void Engine::initData(){
         .pBufferInfo = &uboInfo,
         .pTexelBufferView = nullptr
     };
-
-    vkUpdateDescriptorSets(m_device, 1, &samplerWrite, 0, nullptr);
     vkUpdateDescriptorSets(m_device, 1, &uboWrite, 0, nullptr);
+}
 
-    MaterialData baseMaterial{
-        .baseColor = glm::vec4(1.0f),
-        .metallicFactor = 0.2f,
-        .roughnessFactor = 0.2f,
-        .baseColorIndex = 0,
-        .metallicRoughnessIndex = 0,
-        .normalIndex = 0
+void Engine::initDearImGui(){
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE };
+
+    VkDescriptorPoolCreateInfo poolInfo = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = 1000,
+        .poolSizeCount = 1,
+        .pPoolSizes = &poolSize
     };
-    addMaterial(baseMaterial, "BASE");
 
+    vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_ImguiPool);
+
+    ImGui::CreateContext();
+    ImGui_ImplSDL3_InitForVulkan(m_pWindow);
+    ImGui_ImplVulkan_InitInfo imguiVulkanInfo = {
+        .Instance = m_instance,
+        .PhysicalDevice = m_physicalDevice,
+        .Device = m_device,
+        .QueueFamily = m_graphicsQueueFamily,
+        .Queue = m_graphicsQueue,
+        .DescriptorPool = m_ImguiPool,
+        .MinImageCount = 2,
+        .ImageCount = 2,
+        .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
+        .UseDynamicRendering = true
+    };
+    imguiVulkanInfo.PipelineRenderingCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .pNext = nullptr,
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &m_swapchain->format
+    };
+    
+    ImGui::CreateContext();
+    ImGui_ImplVulkan_Init(&imguiVulkanInfo);
 }
 
 //Utility
-bool Engine::loadShader(VkShaderModule* outShader, const char* filePath) {
-	std::ifstream file(filePath, std::ios::ate | std::ios::binary);
+bool Engine::loadShader(VkShaderModule* outShader, std::string filePath) {
+    std::ifstream file(filePath, std::ios::ate | std::ios::binary);
 	if (!file.is_open()) {
-		return false;
+        return false;
 	}
 	size_t fileSize = (size_t)file.tellg();
 	std::vector<uint32_t> buffer(fileSize / sizeof(uint32_t));
-
+    
 	file.seekg(0);
 	file.read((char*)buffer.data(), fileSize);
 	file.close();
@@ -604,7 +663,7 @@ bool Engine::loadShader(VkShaderModule* outShader, const char* filePath) {
     return true;
 }
 
-std::unique_ptr<Image> Engine::createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped){
+std::shared_ptr<Image> Engine::createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped){
     size_t dataSize = size.depth * size.width * size.height * sizeof(float);
     VkBufferUsageFlags stagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     Buffer stagingBuffer = Buffer(m_device, m_allocator, dataSize, stagingUsage, 
@@ -708,9 +767,72 @@ void Engine::updateScene(){
     memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
 }
 
-uint32_t Engine::addMaterial(MaterialData data, std::string name){
-    if(matNameToMatIndex.find(name) != matNameToMatIndex.end()){
-        return matNameToMatIndex.at(name);
+void Engine::createRenderablesFromNode(std::shared_ptr<GLTFNode> node){
+    if(node->mesh != nullptr){
+        for(auto surface : node->mesh->surfaces){
+            Renderable r{
+                .vertexBufferAddress = node->mesh->data.vertexBufferAddress,
+                .indexBuffer = node->mesh->data.indexBuffer->buffer,
+                .indexCount = surface.count,
+                .firstIndex = surface.startIndex,
+                .materialIndex = surface.matIndex,
+                .modelMat = node->worldTransform
+            };
+            switch (surface.type)
+            {
+            case RenderPass::OPAQUE:
+                opaqueRenderables.push_back(r);
+                break;
+
+            case RenderPass::TRANSPARENT:
+                transparentRenderables.push_back(r);
+                break;
+
+            default:
+                break;
+            }
+        }
+    }
+
+    for(auto c : node->children){
+        createRenderablesFromNode(c);
+    }
+}
+
+uint32_t Engine::addTexture(const TextureData& data, std::string name){
+    if(texNameToIndex.find(name) != texNameToIndex.end()){
+        return texNameToIndex.at(name);
+    }
+        
+    uint32_t index = (uint32_t)textures.size();
+    texNameToIndex.insert({name, index});
+
+    VkDescriptorImageInfo samplerInfo = {
+        .sampler = data.sampler,
+        .imageView = data.texture->view,
+        .imageLayout = data.texture->layout,
+    };
+    VkWriteDescriptorSet samplerWrite {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr, 
+        .dstSet = m_descriptorSet,
+        .dstBinding = SAMPLER_BINDING,
+        .dstArrayElement = index,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &samplerInfo,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr
+    };
+    vkUpdateDescriptorSets(m_device, 1, &samplerWrite, 0, nullptr);
+
+    textures.push_back(data);
+    return index;
+}
+
+uint32_t Engine::addMaterial(const MaterialData& data, std::string name){
+    if(matNameToIndex.find(name) != matNameToIndex.end()){
+        return matNameToIndex.at(name);
     }
     //Check if this material will cause buffer to resize
     bool willResize = false;
@@ -726,10 +848,9 @@ uint32_t Engine::addMaterial(MaterialData data, std::string name){
     };
 
     //Push next element into spot it'll be read
-    materials.push_back(data);
     uint32_t index = (uint32_t)materials.size();
-    matNameToMatIndex.insert({name, index});
-    
+    materials.push_back(data);
+    matNameToIndex.insert({name, index});
     //If that push is going to cause a resize, resize the destination buffer then copy the whole buffer over 
     if(willResize){
         stagingCopy.srcOffset = 0;
@@ -768,7 +889,413 @@ uint32_t Engine::addMaterial(MaterialData data, std::string name){
     return index;
 }
 
+bool Engine::loadGLTF(std::filesystem::path filePath){
+    std::cout << "Loading GLTF: " << filePath << std::endl;
+    
+    std::shared_ptr<GLTFScene> scene = std::make_shared<GLTFScene>();
+    std::vector<std::shared_ptr<MeshAsset>> meshes;
+    std::vector<std::shared_ptr<GLTFNode>> nodes;
+    std::vector<std::shared_ptr<Image>> images;
+    std::vector<std::string> imageNames;
+    std::vector<std::string> materialNames;
+    std::vector<RenderPass> passTypes;
 
+    fastgltf::Parser parser;
+
+    auto gltfOptions =  fastgltf::Options::DontRequireValidAssetMember | fastgltf::Options::AllowDouble | fastgltf::Options::LoadExternalBuffers;
+
+    auto data = fastgltf::GltfDataBuffer::FromPath(filePath);
+    if (data.error() != fastgltf::Error::None) {
+        return false;
+    }
+
+    auto asset = parser.loadGltf(data.get(), filePath.parent_path(), gltfOptions);
+    if (auto error = asset.error(); error != fastgltf::Error::None) {
+        return false;
+    }
+
+    VkSamplerCreateInfo samplerCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .pNext = nullptr,
+        .minLod = 0.0f,
+        .maxLod = VK_LOD_CLAMP_NONE,
+    };
+
+    //Load samplers
+    for (fastgltf::Sampler& sampler : asset->samplers) {
+        fastgltf::Filter magF = sampler.magFilter.value_or(fastgltf::Filter::Linear);
+        switch (magF)
+        {
+        case fastgltf::Filter::Linear:
+        case fastgltf::Filter::LinearMipMapLinear:
+        case fastgltf::Filter::LinearMipMapNearest:
+            samplerCreateInfo.magFilter = VK_FILTER_LINEAR;
+            break;
+        case fastgltf::Filter::Nearest:
+        case fastgltf::Filter::NearestMipMapLinear:
+        case fastgltf::Filter::NearestMipMapNearest:
+            samplerCreateInfo.magFilter = VK_FILTER_NEAREST;
+            break;
+        default:
+            samplerCreateInfo.magFilter = VK_FILTER_LINEAR;
+            break;
+        }
+
+        fastgltf::Filter minF = sampler.minFilter.value_or(fastgltf::Filter::Linear);
+        switch (minF)
+        {
+        case fastgltf::Filter::Linear:
+        case fastgltf::Filter::LinearMipMapLinear:
+        case fastgltf::Filter::LinearMipMapNearest:
+            samplerCreateInfo.minFilter = VK_FILTER_LINEAR;
+            break;
+        case fastgltf::Filter::Nearest:
+        case fastgltf::Filter::NearestMipMapLinear:
+        case fastgltf::Filter::NearestMipMapNearest:
+            samplerCreateInfo.minFilter = VK_FILTER_NEAREST;
+            break;
+        default:
+            samplerCreateInfo.minFilter = VK_FILTER_LINEAR;
+            break;
+        }
+        
+        switch (minF)
+        {
+        case fastgltf::Filter::LinearMipMapLinear:
+        case fastgltf::Filter::NearestMipMapLinear:
+            samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            break;
+        case fastgltf::Filter::LinearMipMapNearest:
+        case fastgltf::Filter::NearestMipMapNearest:
+            samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            break;
+        default:
+            samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            break;
+        }
+    
+        VkSampler vksampler;
+        vkCreateSampler(m_device, &samplerCreateInfo, nullptr, &vksampler);
+        scene->samplers.push_back(vksampler);
+    }
+
+    //Load images
+    for (fastgltf::Image& image : asset->images){
+        std::shared_ptr<Image> newImage = nullptr;        
+        int width, height, nrChannels;
+
+        std::visit(fastgltf::visitor{
+            [&](fastgltf::sources::URI& URI) {
+                assert(URI.fileByteOffset == 0);
+                assert(URI.uri.isLocalPath());
+                std::string stem = filePath.relative_path().remove_filename().generic_string();
+                std::string path(URI.uri.path().begin(), URI.uri.path().end());
+                std::string concatted = stem + path;
+                unsigned char* data = stbi_load(concatted.c_str(), &width, &height, &nrChannels, 4);
+                if(data){
+                    VkExtent3D size{
+                        .width = (uint32_t)width,
+                        .height = (uint32_t)height,
+                        .depth = 1
+                    };
+                    newImage = createImageFromData(data, size, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+                    stbi_image_free(data);
+                }
+                else{
+                    std::cout << "Failed to load URI" << std::endl;
+                }
+                imageNames.push_back(path.c_str());
+                scene->images.insert({path.c_str(), newImage});
+                std::cout << "- Loaded Image: " << path.c_str() << std::endl;
+
+            },
+            [&](fastgltf::sources::BufferView& BufferView) {
+                auto& bufView = asset->bufferViews[BufferView.bufferViewIndex];
+                auto& buffer = asset->buffers[bufView.bufferIndex];
+                
+                unsigned char* data = nullptr;
+                
+                if(std::holds_alternative<fastgltf::sources::Vector>(buffer.data))
+                {   
+                    const auto& vec = std::get<fastgltf::sources::Vector>(buffer.data);
+                    const unsigned char* vecData = reinterpret_cast<const unsigned char*>(vec.bytes.data());
+                    data = stbi_load_from_memory(vecData + bufView.byteOffset, (int)bufView.byteLength, &width, &height, &nrChannels, 4);
+
+                }else if(std::holds_alternative<fastgltf::sources::Array>(buffer.data)){
+                    const auto& vec = std::get<fastgltf::sources::Array>(buffer.data).bytes;
+                    const unsigned char* vecData = reinterpret_cast<const unsigned char*>(vec.data());
+                    data = stbi_load_from_memory(vecData + bufView.byteOffset, (int)bufView.byteLength, &width, &height, &nrChannels, 4);
+                }
+
+                if(data){
+                    VkExtent3D size{
+                        .width = (uint32_t)width,
+                        .height = (uint32_t)height,
+                        .depth = 1
+                    };
+                    newImage = createImageFromData(data, size, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+                    stbi_image_free(data);
+                }else{
+                    std::cout << "Failed to load BufferView" << std::endl;
+                }
+                imageNames.push_back(image.name.c_str());
+                scene->images.insert({image.name.c_str(), newImage});
+                std::cout << "- Loaded Image: " << image.name.c_str() << std::endl;
+            },
+            [&](fastgltf::sources::Array& arraySource) {
+                const auto& vec = arraySource.bytes;
+                const auto& vecData = reinterpret_cast<const unsigned char*>(vec.data());
+                unsigned char* data = stbi_load_from_memory(vecData, (int)vec.size(), &width, &height, &nrChannels, 4);
+                if (data) {                    
+                    VkExtent3D size{
+                        .width = (uint32_t)width,
+                        .height = (uint32_t)height,
+                        .depth = 1
+                    };
+                    newImage = createImageFromData(data, size, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+                    stbi_image_free(data);
+                }else{
+                    std::cout << "Failed to load Array" << std::endl;
+                }
+                
+                imageNames.push_back(image.name.c_str());
+                scene->images.insert({image.name.c_str(), newImage});
+                std::cout << "- Loaded Image: " << image.name.c_str() << std::endl;
+            },
+            [&](auto&& other) {
+                std::cerr << "Unhandled image source type: " << typeid(other).name() << "\n";
+            }
+        }, image.data);
+
+        if(newImage == nullptr){
+            std::cout << "- Failed to load image: " << image.name.c_str() << ". Defaulting to checkerboard." << std::endl;
+            newImage = checkerboardImage;
+        }
+        images.push_back(newImage);
+    }
+
+    //Load materials (addtextures, addmaterial)
+    for (fastgltf::Material& material : asset->materials){
+        
+        std::cout << "- Loading Material: " << material.name.c_str() << std::endl;
+        MaterialData newMaterial;
+        newMaterial.baseColor.x = material.pbrData.baseColorFactor[0];
+        newMaterial.baseColor.y = material.pbrData.baseColorFactor[1];
+        newMaterial.baseColor.z = material.pbrData.baseColorFactor[2];
+        newMaterial.baseColor.w = material.pbrData.baseColorFactor[3];
+
+        newMaterial.metallicFactor = material.pbrData.metallicFactor;
+        newMaterial.roughnessFactor = material.pbrData.roughnessFactor;
+        
+        newMaterial.baseColorIndex = 0;
+        newMaterial.metallicRoughnessIndex = 0;
+        newMaterial.normalIndex = 0;
+        
+        if(material.alphaMode == fastgltf::AlphaMode::Blend){
+            passTypes.push_back(RenderPass::TRANSPARENT);
+        }else{
+            passTypes.push_back(RenderPass::OPAQUE);
+        }
+
+        //create textureData 
+        if(material.pbrData.baseColorTexture.has_value()){
+            size_t assetTexIndex = material.pbrData.baseColorTexture.value().textureIndex;
+            TextureData texData;
+
+            size_t imageLocalIndex = asset->textures[assetTexIndex].imageIndex.value();
+            texData.texture = images.at(imageLocalIndex);
+
+            if(asset->textures[assetTexIndex].samplerIndex.has_value()){
+                size_t samplerLocalIndex = asset->textures[assetTexIndex].samplerIndex.value();
+                texData.sampler = scene->samplers.at(samplerLocalIndex);
+            }else{
+                texData.sampler = defaultLinearSampler;
+            }            
+            newMaterial.baseColorIndex = addTexture(texData, imageNames.at(imageLocalIndex));
+        }        
+        if(material.pbrData.metallicRoughnessTexture.has_value()){
+            size_t assetTexIndex = material.pbrData.metallicRoughnessTexture.value().textureIndex;
+            TextureData texData;
+
+            size_t imageLocalIndex = asset->textures[assetTexIndex].imageIndex.value();
+            texData.texture = images.at(imageLocalIndex);
+
+            if(asset->textures[assetTexIndex].samplerIndex.has_value()){
+                size_t samplerLocalIndex = asset->textures[assetTexIndex].samplerIndex.value();
+                texData.sampler = scene->samplers.at(samplerLocalIndex);
+            }else{
+                texData.sampler = defaultLinearSampler;
+            }            
+            newMaterial.metallicRoughnessIndex = addTexture(texData, imageNames.at(imageLocalIndex));
+        }
+        if(material.normalTexture.has_value()){
+            size_t assetTexIndex = material.normalTexture.value().textureIndex;
+            TextureData texData;
+
+            size_t imageLocalIndex = asset->textures[assetTexIndex].imageIndex.value();
+            texData.texture = images.at(imageLocalIndex);
+
+            if(asset->textures[assetTexIndex].samplerIndex.has_value()){
+                size_t samplerLocalIndex = asset->textures[assetTexIndex].samplerIndex.value();
+                texData.sampler = scene->samplers.at(samplerLocalIndex);
+            }else{
+                texData.sampler = defaultLinearSampler;
+            }            
+            newMaterial.normalIndex = addTexture(texData, imageNames.at(imageLocalIndex));
+        }
+
+        materialNames.push_back(material.name.c_str());
+        uint32_t matIndex = addMaterial(newMaterial, material.name.c_str());
+        scene->materialIndices.insert({material.name.c_str(), matIndex});
+    }
+
+    std::vector<uint32_t> indices;
+    std::vector<Vertex> vertices;
+    for (fastgltf::Mesh& mesh : asset->meshes) {
+        std::shared_ptr<MeshAsset> newMesh = std::make_shared<MeshAsset>();
+        newMesh->name = mesh.name;
+        
+        std::cout << "- Loading Mesh: " << mesh.name.c_str() << std::endl;
+
+        scene->meshes.insert({mesh.name.c_str(), newMesh});
+        meshes.push_back(newMesh);
+        
+        indices.clear();
+        vertices.clear();
+        
+        for (fastgltf::Primitive& prim : mesh.primitives) {
+            Surface newSurface;
+
+            newSurface.startIndex = (uint32_t)indices.size();
+            newSurface.count = (uint32_t)asset->accessors[prim.indicesAccessor.value()].count;
+            size_t initialVert = vertices.size();
+            fastgltf::Accessor& indexAccessor = asset->accessors[prim.indicesAccessor.value()];
+            indices.reserve(indices.size() + indexAccessor.count);
+            {
+            fastgltf::iterateAccessor<std::uint32_t>(asset.get(), indexAccessor,
+                        [&](std::uint32_t idx) {
+                            indices.push_back(idx + (uint32_t)initialVert);
+                        });
+            }
+
+            auto posAttribute = prim.findAttribute("POSITION");
+            auto posAccessor = asset->accessors[posAttribute->accessorIndex];
+            vertices.resize(vertices.size() + posAccessor.count);
+            {
+            fastgltf::iterateAccessorWithIndex<glm::vec3>(asset.get(), posAccessor,
+                    [&](glm::vec3 v, size_t idx) {
+                        Vertex vert;
+                        vert.position = v;
+                        vert.normal = { 1, 0, 0 };
+                        vert.color = glm::vec4 { 1.f };
+                        vert.uv_x = 0;
+                        vert.uv_y = 0;
+                        vertices[initialVert + idx] = vert;
+                    });
+            }
+
+            auto normAttribute = prim.findAttribute("NORMAL");
+            if (normAttribute != prim.attributes.end()) {
+                auto normAccessor = asset->accessors[normAttribute->accessorIndex];
+                fastgltf::iterateAccessorWithIndex<glm::vec3>(asset.get(), normAccessor,
+                    [&](glm::vec3 v, size_t idx) {
+                        vertices[initialVert + idx].normal = v;
+                    });
+            }
+
+            // TEXCOORD_0 /uvs
+            auto texAttribute = prim.findAttribute("TEXCOORD_0");
+            if (texAttribute != prim.attributes.end()) {
+                auto texAccessor = asset->accessors[texAttribute->accessorIndex];
+                fastgltf::iterateAccessorWithIndex<glm::vec2>(asset.get(), texAccessor,
+                    [&](glm::vec2 v, size_t idx) {
+                        vertices[initialVert + idx].uv_x = v.x;
+                        vertices[initialVert + idx].uv_y = v.y;
+                    });
+            }
+
+            // COLOR_0
+            auto colAttribute = prim.findAttribute("COLOR_0");
+            if (colAttribute != prim.attributes.end()) {
+                auto colAccessor = asset->accessors[colAttribute->accessorIndex];
+                fastgltf::iterateAccessorWithIndex<glm::vec4>(asset.get(), colAccessor,
+                    [&](glm::vec4 v, size_t idx) {
+                        vertices[initialVert + idx].color = v;
+                    });
+            }
+
+            if(prim.materialIndex.has_value()){
+                newSurface.matIndex = matNameToIndex.at(materialNames.at(prim.materialIndex.value()));
+                newSurface.type = passTypes.at(prim.materialIndex.value());
+            }else{
+                newSurface.matIndex = 0;
+                newSurface.type = RenderPass::OPAQUE;
+            }
+
+            newMesh->surfaces.push_back(newSurface);
+        }
+        
+        newMesh->data = uploadMesh(indices, vertices);
+    }
+
+    //Extract all node transforms & meshes
+    for (fastgltf::Node& node: asset->nodes){
+        std::shared_ptr<GLTFNode> newNode = std::make_shared<GLTFNode>();
+
+        std::cout << "- Loading Node: " << node.name.c_str() << std::endl;
+
+        if(node.meshIndex.has_value()){
+            newNode->mesh = meshes.at(node.meshIndex.value());
+        }
+        nodes.push_back(newNode);
+
+        fastgltf:: math::fmat4x4 matrix = fastgltf::getTransformMatrix(node);
+        memcpy(&newNode->localTransform, matrix.data(), sizeof(matrix));
+
+        scene->nodes.insert({node.name.c_str(), newNode});
+    }
+
+    //Create node relationships
+    for(uint32_t nodeIndex = 0; nodeIndex < asset->nodes.size(); nodeIndex++){
+        fastgltf::Node& node = asset->nodes.at(nodeIndex);
+        std::shared_ptr<GLTFNode> gltfNode = nodes.at(nodeIndex);
+
+        for (uint32_t c : node.children){
+            gltfNode->children.push_back(nodes[c]);
+            nodes[c]->parent = gltfNode;
+        }
+    }
+
+    //Refresh world node world transforms
+    for (std::shared_ptr<GLTFNode> node : nodes) {
+        if (node->parent.lock() == nullptr) {
+            scene->topNodes.push_back(node);
+
+            node->refreshTransform(glm::mat4(1.0f));
+        }
+    }
+
+    loadedGLTFs.insert({filePath.filename().generic_string(), scene});
+    return true;
+}
+
+void Engine::meshUploader(){
+    while (true) {
+		if (pathQueue.empty()) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			continue;
+		}
+		
+		std::filesystem::path res = pathQueue.front();
+		pathQueue.pop();
+		if (res.generic_string() == "QUIT") {
+			break;
+		}
+
+        loadGLTF(res);
+	}
+    std::cout << "Mesh Uploader exiting..." << std::endl;
+}
 
 //Transfer
 void Engine::prepImmediateTransfer(){
@@ -806,8 +1333,6 @@ void Engine::submitImmediateTransfer(){
 
 //Drawing
 void Engine::draw(){
-    updateScene();
-
     VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, VK_TRUE, 1000000000);
     if (fenceResult != VK_SUCCESS) {
         throw std::runtime_error("Fence wait failed!");
@@ -847,8 +1372,11 @@ void Engine::draw(){
     drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 	m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     drawImage->copyTo(cmd, m_swapchain->images.at(index));
-    m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
+    m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    drawDearImGui(cmd, m_swapchain->images.at(index).view);
+    m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    // m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 	vkEndCommandBuffer(cmd);
 
     VkCommandBufferSubmitInfo commandBufferSubmitInfo = {
@@ -914,6 +1442,7 @@ void Engine::draw(){
 }
 
 void Engine::drawMeshes(VkCommandBuffer cmd){
+
     VkRenderingAttachmentInfo color_attachment = {};
     color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     color_attachment.pNext = nullptr;
@@ -941,8 +1470,10 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     rendering_info.pDepthAttachment = &depth_attachment;
     rendering_info.pStencilAttachment = nullptr;
     
+
+    auto start = std::chrono::system_clock::now();
     vkCmdBeginRendering(cmd, &rendering_info);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineOpaque);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
     
     VkViewport viewport = {};
@@ -961,27 +1492,69 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     scissor.extent.height = drawExtent.height;
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     
-    
+    stats.drawCallCount = 0;
+    stats.triCount = 0;
     PushConstants pcs;
-    // for (const MeshData& mesh : meshes) {
-    //     pcs.vb_addr = mesh.vertex_buffer_address;
-    //     pcs.model = mesh.model_mat;
-    //     vkCmdPushConstants(cmd, mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &pcs);
-    //     vkCmdBindIndexBuffer(cmd, mesh.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-    //     vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
-    // }
+    for(const Renderable& r : opaqueRenderables){
+        pcs.vertexBuffer = r.vertexBufferAddress;
+        pcs.materialIndex = r.materialIndex;
+        pcs.modelMatrix = r.modelMat;
+        vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
+        vkCmdBindIndexBuffer(cmd, r.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, r.indexCount, 1, r.firstIndex, 0, 0);
+
+        stats.drawCallCount++;
+        stats.triCount += r.indexCount / 3;
+    }
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineTransparent);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    for(const Renderable& r : transparentRenderables){
+        pcs.vertexBuffer = r.vertexBufferAddress;
+        pcs.materialIndex = r.materialIndex;
+        pcs.modelMatrix = r.modelMat;
+        vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
+        vkCmdBindIndexBuffer(cmd, r.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, r.indexCount, 1, r.firstIndex, 0, 0);
+
+        stats.drawCallCount++;
+        stats.triCount += r.indexCount / 3;
+    }
+
+    vkCmdEndRendering(cmd);
+
+    auto end = std::chrono::system_clock::now();    
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    if(frameNumber % 144){
+        stats.meshDrawTime = elapsed.count() / 1000.0f;
+    }
+}
+
+void Engine::drawDearImGui(VkCommandBuffer cmd, VkImageView view){
+        VkRenderingAttachmentInfo colorAttachment {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .pNext = nullptr,
+        .imageView = view,
+        .imageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    };       
     
-	
-    // pcs.modelMatrix = testMeshes.at(2).data.modelMat;
-    // pcs.materialIndex = testMeshes.at(2).surfaces.at(0).matIndex;
-    pcs.modelMatrix = glm::mat4(1.0f);
-    pcs.materialIndex = 0;
-	pcs.vertexBuffer = testMeshes.at(2).data.vertexBufferAddress;
-    
-	vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
-	vkCmdBindIndexBuffer(cmd, testMeshes.at(2).data.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
-    
-	vkCmdDrawIndexed(cmd, testMeshes.at(2).surfaces.at(0).count, 1, testMeshes.at(2).surfaces.at(0).startIndex, 0, 0);
+    VkRenderingInfo renderingInfo {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .pNext = nullptr,
+        .renderArea = VkRect2D { VkOffset2D { 0, 0 }, m_swapchain->extent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachment,
+    };
+
+    vkCmdBeginRendering(cmd, &renderingInfo);
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 
     vkCmdEndRendering(cmd);
 }
@@ -990,20 +1563,25 @@ void Engine::run(){
     SDL_Event e;
     bool quit = false;
     while(!quit){
-        uint64_t currentTime = SDL_GetTicksNS() - initializationTime;
+        
+        auto start = std::chrono::system_clock::now();
+        uint64_t currentTime = getTime();
         deltaTime = currentTime - lastTime;
         while(SDL_PollEvent(&e) != 0){
+
+            ImGui_ImplSDL3_ProcessEvent(&e);
             cam->processSDLEvent(e);
+
             switch (e.type)
             {
             case SDL_EVENT_QUIT:
                 quit = true;
                 break;
             case SDL_EVENT_WINDOW_MINIMIZED:
-                //stopRendering =true
+                minimized = true;
                 break;
             case SDL_EVENT_WINDOW_MAXIMIZED:
-                //stopRendering = false;
+                minimized = false;
                 break;
             case SDL_EVENT_KEY_DOWN:
                 switch (e.key.key)
@@ -1014,6 +1592,7 @@ void Engine::run(){
                 case SDLK_Q:
                     mouseCaptured = !mouseCaptured;
                     SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
+                    SDL_CaptureMouse(mouseCaptured);
                     break;
                 default:
                     break;
@@ -1021,16 +1600,58 @@ void Engine::run(){
             default:
                 break;
             }
-            
         }
-
-        //stopRendering
-            //continue
         
-        //future imgui stuff
-        //ImplVulkanNewFrame, ImpleSDL3NewFrame
+        if(minimized){
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        if (ImGui::Begin("Stats")) {
+            ImGui::Text("Initialization Time: %.4f ms", stats.initTime);
+            ImGui::Text("Frame: %f ms", stats.frameTime);
+            ImGui::Text("Draw: %f ms", stats.meshDrawTime);
+            ImGui::Text("Update: %f ms", stats.sceneUpdateTime);
+            ImGui::Text("Tris: %i", stats.triCount);
+            ImGui::Text("Draws: %i", stats.drawCallCount);
+            ImGui::Text("Yaw: %f ", glm::degrees(cam->yaw));
+            ImGui::Text("Pitch: %f ", glm::degrees(cam->pitch));
+		}
+		ImGui::End();
+        ImGui::Render();
+        
+
+        auto updateStart = std::chrono::system_clock::now();
+        opaqueRenderables.clear();
+        transparentRenderables.clear();
+        for(auto& [name, scene] : loadedGLTFs){
+            for(auto& node : scene->topNodes){
+                createRenderablesFromNode(node);
+            }
+        }
+        updateScene();
+        auto updateEnd = std::chrono::system_clock::now();    
+        auto updateElapsed = std::chrono::duration_cast<std::chrono::microseconds>(updateEnd - updateStart);
+        if(frameNumber % 144){
+            stats.sceneUpdateTime = updateElapsed.count() / 1000.0f;
+        }
         
         draw();
+        
+        auto end = std::chrono::system_clock::now();    
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        if(frameNumber% 144){
+            stats.frameTime = elapsed.count() / 1000.0f;
+        }
+
         lastTime = currentTime; 
     }
 }
+
+//TODO gltf scene/node loading
+//add bool for active/inactive, skip inactive in creating renderable list
+//each frame in update scene iterate over tree loaded scene nodes drawing
+//
