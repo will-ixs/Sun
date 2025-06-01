@@ -47,12 +47,17 @@ private:
     bool loadGLTF(std::filesystem::path filePath);
     std::shared_ptr<Image> createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped);
     void updateScene();
-    void createRenderablesFromNode(std::shared_ptr<GLTFNode> node);
 
+    void createRenderablesFromNode(std::shared_ptr<GLTFNode> node);
+    void sortTransparentRenderables();
+    bool renderableVisible(const Renderable& r, const glm::mat4& viewProj);
+    //Material / Textures util
+    void addLights(const std::vector<Light>& lights);
     uint32_t addMaterial(const MaterialData& data, std::string name);
     uint32_t addTexture(const TextureData& data, std::string name);
     MaterialData getMatFromName(std::string name) { return materials.at(matNameToIndex.find(name)->second); };
     TextureData getTexFromName(std::string name) { return textures.at(texNameToIndex.find(name)->second); };
+
     
     void meshUploader();
     std::queue<std::filesystem::path> pathQueue;
@@ -70,6 +75,7 @@ private:
     bool m_bUseValidation = false;
     bool m_bUseDebugMessenger = false;
     
+    //Window info
     struct SDL_Window* m_pWindow {nullptr};
     uint32_t windowWidth;
     uint32_t windowHeight;
@@ -91,6 +97,7 @@ private:
     VkDescriptorSetLayout m_descriptorLayout;
     VkDescriptorSet m_descriptorSet;
     
+    //Bindless stuff
     const uint32_t STORAGE_BINDING = 0;
     const uint32_t SAMPLER_BINDING = 1;
     const uint32_t IMAGE_BINDING = 2;
@@ -113,16 +120,19 @@ private:
 
     //Draw Resources
     std::unique_ptr<Image> drawImage;
+    std::unique_ptr<Image> resolveImage;
     std::unique_ptr<Image> depthImage;
     VkExtent2D drawExtent; 
     std::vector<Renderable> opaqueRenderables;
     std::vector<Renderable> transparentRenderables;
+    std::vector<uint32_t> transparentRenderablesIndices;
     std::vector<MeshAsset> testMeshes;
     std::unique_ptr<Camera> cam;
 
     //Scenes
     std::unordered_map<std::string, std::shared_ptr<GLTFScene>> loadedGLTFs;
-    //Buffers
+
+    //UBO Stuff
     UniformBufferObject ubo;
     std::unique_ptr<Buffer> uboBuffer;
     
@@ -131,6 +141,12 @@ private:
     std::unordered_map<std::string, uint32_t> matNameToIndex;
     std::unique_ptr<Buffer> materialBuffer;
     VkDeviceAddress materialBufferAddress;
+
+    //Lights
+    std::vector<Light> lightsPoint;
+    // std::vector<SpotLight> lightsSpot;
+    std::unique_ptr<Buffer> lightBuffer;
+    VkDeviceAddress lightBufferAddress;
     
     //Textures
     std::vector<TextureData> textures;
@@ -142,7 +158,6 @@ private:
     std::shared_ptr<Image> checkerboardImage;
     VkSampler defaultLinearSampler;
     VkSampler defaultNearestSampler;
-    std::vector<VkWriteDescriptorSet> tempDescriptorWrites;
     
     bool cleanedUp;
     bool mouseCaptured = true;

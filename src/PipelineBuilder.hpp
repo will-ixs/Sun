@@ -24,7 +24,9 @@ class PipelineBuilder {
         void setTopology(VkPrimitiveTopology topology);
         void setPolygonMode(VkPolygonMode mode);
         void setCullingMode(VkCullModeFlags mode, VkFrontFace face);
+
         void setMultisamplingNone();
+        void setMultisampling(VkSampleCountFlagBits sampleCount);
 
         void disableBlending();
         void enableBlending(VkBlendFactor dst_blend_factor);

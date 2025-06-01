@@ -26,6 +26,8 @@ public:
     Camera(float width, float height);
     ~Camera();
 
+    glm::vec4 getPos() {return glm::vec4(position, 1.0f);};
+    
     glm::mat4 getViewMatrix();
     glm::mat4 getRotationMatrix();
     glm::mat4 getRenderMatrix();

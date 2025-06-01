@@ -40,6 +40,7 @@ struct Vertex {
 	glm::vec3 normal;
 	float uv_y;
 	glm::vec4 color;
+	glm::vec4 tangent;
 };
 
 struct MeshData {
@@ -80,11 +81,17 @@ enum RenderPass {
     RenderPassSize
 };
 
+struct Bounds{
+    glm::vec3 origin;
+    glm::vec3 extents;
+};
+
 struct Surface {
     RenderPass type;
     uint32_t startIndex;
     uint32_t count;
     uint32_t matIndex;
+    Bounds bounds;
 };
 
 struct MeshAsset {
@@ -101,6 +108,7 @@ struct GLTFNode{
     glm::mat4 worldTransform;
 
     std::shared_ptr<MeshAsset> mesh;
+    int32_t lightIndex = -1;
 
     void refreshTransform(const glm::mat4& parentMatrix)
     {
@@ -110,7 +118,6 @@ struct GLTFNode{
         }
     }
 };
-
 
 struct GLTFScene{
     std::unordered_map<std::string, std::shared_ptr<MeshAsset>> meshes;
@@ -129,17 +136,33 @@ struct Renderable{
     uint32_t firstIndex;
     uint32_t materialIndex;
     glm::mat4 modelMat;
+    Bounds bounds;
 };
 
 struct UniformBufferObject{
-    glm::mat4 view;
-    glm::mat4 proj;
     glm::mat4 viewproj;
+    glm::vec4 camPos;
     glm::vec4 ambientColor;
     glm::vec4 sunlightDirection;
     glm::vec4 sunlightColor;
 
     VkDeviceAddress materialBuffer;
+    VkDeviceAddress lightBuffer;
+    uint32_t numLights;
+};
+
+struct alignas(16) Light{
+    alignas(16) uint32_t type;
+    alignas(16) glm::vec3 lightPos;   
+    alignas(16) glm::vec3 lightDir;
+    alignas(16) glm::vec3 lightColor; //VVVVV fastgltf descriptions VVVVVVV
+    /** Point and spot lights use candela (lm/sr) while directional use lux (lm/m^2) */
+    float intensity;
+    /** Range for point and spot lights. If not present, range is infinite. */
+    float range;
+	/** The inner and outer cone angles only apply to spot lights */
+    float innerConeAngle;
+    float outerConeAngle;
 };
 
 #endif

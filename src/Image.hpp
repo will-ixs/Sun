@@ -21,11 +21,14 @@ public:
 
     Image() = delete;
     Image(VkDevice device, VmaAllocator allocator, VkExtent3D extent, VkFormat format, 
-        VkImageUsageFlags usage, VkImageAspectFlags aspectFlags, VmaAllocationCreateFlags vmaAllocFlags);
-    Image(VkDevice device, VkImage s_Image, VkImageView s_ImageView, VkExtent3D extent, VkFormat format, VkImageAspectFlags imageAspect, bool swapchainImage);
+        VkImageUsageFlags usage, VkImageAspectFlags aspectFlags, VmaAllocationCreateFlags vmaAllocFlags,
+        VkSampleCountFlagBits sampleCount, uint32_t mipLevels);
+
+    Image(VkDevice device, VkImage s_Image, VkImageView s_ImageView, VkExtent3D extent, VkFormat format, 
+        VkImageAspectFlags imageAspect, bool swapchainImage);
     ~Image();
 
-    void createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAllocFlags);
+    void createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAllocFlags, VkSampleCountFlagBits sampleCount, uint32_t mipLevels);
     void createImageView();
     void destroy();
 

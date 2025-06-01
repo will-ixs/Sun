@@ -2,11 +2,12 @@
 #include <stdexcept>
 
 Image::Image(VkDevice device, VmaAllocator allocator, VkExtent3D imageExtent, VkFormat imageFormat, 
-    VkImageUsageFlags usage, VkImageAspectFlags imageAspect, VmaAllocationCreateFlags vmaAllocFlags)
+    VkImageUsageFlags usage, VkImageAspectFlags imageAspect, VmaAllocationCreateFlags vmaAllocFlags, 
+    VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT, uint32_t mipLevels = 1)
 :
 m_device(device), m_allocator(allocator), extent(imageExtent), format(imageFormat), aspect(imageAspect)
 {
-    createImage(usage, vmaAllocFlags);
+    createImage(usage, vmaAllocFlags, sampleCount, mipLevels);
     createImageView();
 }
 
@@ -28,7 +29,7 @@ Image::~Image()
     }
 }
 
-void Image::createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAllocFlags){
+void Image::createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAllocFlags, VkSampleCountFlagBits sampleCount, uint32_t mipLevels){
     VkImageCreateInfo imageInfo{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = nullptr,
@@ -36,9 +37,9 @@ void Image::createImage(VkImageUsageFlags usage, VmaAllocationCreateFlags vmaAll
         .imageType = VK_IMAGE_TYPE_2D,
         .format = format,
         .extent = extent,
-        .mipLevels = 1,
+        .mipLevels = mipLevels,
         .arrayLayers = 1,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .samples = sampleCount,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
         .usage = usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,

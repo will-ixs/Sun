@@ -74,6 +74,7 @@ void Engine::cleanup(){
     vkDestroyFence(m_device, m_immTransfer.fence, nullptr);
 
     drawImage->destroy();
+    resolveImage->destroy();
     depthImage->destroy();
 
     for(MeshAsset& mesh : testMeshes){
@@ -102,6 +103,7 @@ void Engine::cleanup(){
 
     uboBuffer->destroy();
     materialBuffer->destroy();
+    lightBuffer->destroy();
 
     whiteImage->destroy();
     grayImage->destroy();
@@ -335,13 +337,22 @@ void Engine::initDrawResources(){
     drawImage = std::make_unique<Image>(m_device, m_allocator, 
         drawImgExtent, drawImgFormat, drawImgUsage,
         VK_IMAGE_ASPECT_COLOR_BIT,
-        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT
+        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+        VK_SAMPLE_COUNT_4_BIT, 1
+    );
+
+    resolveImage = std::make_unique<Image>(m_device, m_allocator, 
+        drawImgExtent, drawImgFormat, drawImgUsage,
+        VK_IMAGE_ASPECT_COLOR_BIT,
+        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+        VK_SAMPLE_COUNT_1_BIT, 1
     );
 
     depthImage = std::make_unique<Image>(m_device, m_allocator, 
         drawImgExtent, depthImgFormat, depthImgUsage,
         VK_IMAGE_ASPECT_DEPTH_BIT,
-        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT
+        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+        VK_SAMPLE_COUNT_4_BIT, 1
     );
 }
 
@@ -493,7 +504,8 @@ void Engine::initMeshPipelines(){
 	pb->setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	pb->setPolygonMode(VK_POLYGON_MODE_FILL);
 	pb->setCullingMode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE);
-	pb->setMultisamplingNone();
+	pb->setMultisampling(VK_SAMPLE_COUNT_4_BIT);
+    // pb->setMultisamplingNone();
 	pb->disableBlending();
 	pb->enableDepthtest(VK_TRUE, VK_COMPARE_OP_GREATER_OR_EQUAL);
     // pb->disableDepthtest();
@@ -513,14 +525,13 @@ void Engine::initData(){
     
     //Create UBO Buffer
     uboBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
-    VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT );
     
-    ubo.view = cam->getViewMatrix();
-    ubo.proj = cam->getProjMatrix();
-    ubo.viewproj = glm::mat4(1.0f) * ubo.proj * ubo.view;
+    ubo.camPos = cam->getPos();
+    ubo.viewproj = glm::mat4(1.0f) * cam->getProjMatrix() * cam->getViewMatrix();
     ubo.ambientColor = glm::vec4(0.2f, 0.2f, 0.2f, 1.0f);
     ubo.sunlightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f); //w is sunlight intensity
-    ubo.sunlightDirection = glm::vec4(0.0f, -1.0f, 0.0f, 0.0f);
+    ubo.sunlightDirection = glm::normalize(glm::vec4(1.0f, 1.0f, 1.0f, 0.0f));
     
     memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
     
@@ -530,16 +541,22 @@ void Engine::initData(){
     materialBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(MaterialData) * materials.capacity(), 
     materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
     
+    lightsPoint.reserve(32);
+    VkBufferUsageFlags lightUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    lightBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(Light) * lightsPoint.capacity(), 
+    lightUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+
     VkBufferDeviceAddressInfo bdaInfo {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
         .pNext = nullptr,
         .buffer = materialBuffer->buffer
     };
     materialBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
-    
-    //Create default textures
-    uint32_t white =    glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
-    uint32_t gray =     glm::packUnorm4x8(glm::vec4(0.66f, 0.66f, 0.66f, 1));
+    bdaInfo.buffer = lightBuffer->buffer;
+    lightBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
+
+
+    //Create default texture
 	uint32_t black =    glm::packUnorm4x8(glm::vec4(0, 0, 0, 0));	
 	uint32_t magenta =  glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
 	std::array<uint32_t, 16 *16 > pixels;
@@ -549,9 +566,6 @@ void Engine::initData(){
 		}
 	}
     
-	whiteImage =        createImageFromData((void*)&white, VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
-	grayImage =         createImageFromData((void*)&gray , VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
-	blackImage =        createImageFromData((void*)&black, VkExtent3D{1, 1, 1},   VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
 	checkerboardImage = createImageFromData(pixels.data(), VkExtent3D{16, 16, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
     
     //Create texture samplers
@@ -566,11 +580,12 @@ void Engine::initData(){
 	sampler.minFilter = VK_FILTER_LINEAR;
 	vkCreateSampler(m_device, &sampler, nullptr, &defaultLinearSampler);
 
-    TextureData texData = {
-        .texture = checkerboardImage,
-        .sampler = defaultNearestSampler
-    };
+    // TextureData texData = {
+    //     .texture = checkerboardImage,
+    //     .sampler = defaultNearestSampler
+    // };
     // addTexture(texData, "CHECKERBOARD");
+
     meshThread = std::thread(&Engine::meshUploader, this);
     pathQueue.push("..\\..\\resources\\main1_sponza\\NewSponza_Main_glTF_003.gltf");
     pathQueue.push("..\\..\\resources\\main1_sponza\\NewSponza_Curtains_glTF.gltf");
@@ -674,8 +689,11 @@ std::shared_ptr<Image> Engine::createImageFromData(void* data, VkExtent3D size, 
 	}
 	memcpy(stagingBuffer.allocationInfo.pMappedData, data, dataSize);
 
-    std::unique_ptr<Image> image = std::make_unique<Image>(m_device, m_allocator, size, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 
-        VK_IMAGE_ASPECT_COLOR_BIT, 0);
+    std::unique_ptr<Image> image = std::make_unique<Image>(m_device, m_allocator, size, format, 
+        usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 
+        VK_IMAGE_ASPECT_COLOR_BIT, 0,
+        VK_SAMPLE_COUNT_1_BIT, 1
+    );
 
 
     prepImmediateTransfer();
@@ -759,11 +777,11 @@ MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> verti
 void Engine::updateScene(){
     cam->update();
 
-    ubo.view = cam->getViewMatrix();
-    ubo.proj = cam->getProjMatrix();
-    ubo.viewproj = glm::mat4(1.0f) * ubo.proj * ubo.view;
+    ubo.camPos = cam->getPos();
+    ubo.viewproj = glm::mat4(1.0f) * cam->getProjMatrix() * cam->getViewMatrix();
     ubo.materialBuffer = materialBufferAddress;
-
+    ubo.lightBuffer = lightBufferAddress;
+    ubo.numLights = lightsPoint.size();
     memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
 }
 
@@ -776,20 +794,22 @@ void Engine::createRenderablesFromNode(std::shared_ptr<GLTFNode> node){
                 .indexCount = surface.count,
                 .firstIndex = surface.startIndex,
                 .materialIndex = surface.matIndex,
-                .modelMat = node->worldTransform
+                .modelMat = node->worldTransform,
+                .bounds = surface.bounds
             };
-            switch (surface.type)
-            {
-            case RenderPass::OPAQUE:
-                opaqueRenderables.push_back(r);
-                break;
 
-            case RenderPass::TRANSPARENT:
-                transparentRenderables.push_back(r);
-                break;
-
-            default:
-                break;
+            if(renderableVisible(r, ubo.viewproj)){    
+                switch (surface.type)
+                {
+                    case RenderPass::OPAQUE:
+                    opaqueRenderables.push_back(r);
+                    break;
+                    case RenderPass::TRANSPARENT:
+                    transparentRenderables.push_back(r);
+                    break;
+                    default:
+                    break;
+                }
             }
         }
     }
@@ -798,6 +818,57 @@ void Engine::createRenderablesFromNode(std::shared_ptr<GLTFNode> node){
         createRenderablesFromNode(c);
     }
 }
+
+void Engine::sortTransparentRenderables(){
+    transparentRenderablesIndices.reserve(transparentRenderables.size());
+
+    for (uint32_t i = 0; i < transparentRenderables.size(); i++) {
+        transparentRenderablesIndices.push_back(i);
+    }
+
+    std::sort(transparentRenderablesIndices.begin(), transparentRenderablesIndices.end(), 
+    [&](const auto& l, const auto& r) {
+        const Renderable& L = transparentRenderables.at(l);
+        const Renderable& R = transparentRenderables.at(r);
+        
+        return (glm::length2(L.bounds.origin - glm::vec3(ubo.camPos))) > (glm::length2(R.bounds.origin - glm::vec3(ubo.camPos)));
+    });
+}
+
+bool Engine::renderableVisible(const Renderable& r, const glm::mat4& viewProj){
+    //TODO replace with separating axis theorem (currently: edge/edge not handled and a problem at certain angles)
+    std::array<glm::vec3, 8> corners {
+        glm::vec3 {  1,  1,  1 },
+        glm::vec3 {  1,  1, -1 },
+        glm::vec3 {  1, -1,  1 },
+        glm::vec3 {  1, -1, -1 },
+        glm::vec3 { -1,  1,  1 },
+        glm::vec3 { -1,  1, -1 },
+        glm::vec3 { -1, -1,  1 },
+        glm::vec3 { -1, -1, -1 },
+    };
+    glm::mat4 MVP = viewProj * r.modelMat;
+    glm::vec3 min = {  1.5,  1.5,  1.5 };
+    glm::vec3 max = { -1.5, -1.5, -1.5 };
+
+    for (int c = 0; c < 8; c++) {
+        glm::vec4 v = MVP * glm::vec4(r.bounds.origin + (corners[c] * r.bounds.extents), 1.0f);
+        v.x = v.x / v.w;
+        v.y = v.y / v.w;
+        v.z = v.z / v.w;
+
+        min = glm::min(glm::vec3 { v.x, v.y, v.z }, min);
+        max = glm::max(glm::vec3 { v.x, v.y, v.z }, max);
+    }
+
+    // check the clip space box is within the view
+    if (min.z > 1.0f || max.z < 0.0f || min.x > 1.0f || max.x < -1.0f || min.y > 1.0f || max.y < -1.0f) {
+        return false;
+    } else {
+        return true;
+    }
+}
+
 
 uint32_t Engine::addTexture(const TextureData& data, std::string name){
     if(texNameToIndex.find(name) != texNameToIndex.end()){
@@ -889,6 +960,46 @@ uint32_t Engine::addMaterial(const MaterialData& data, std::string name){
     return index;
 }
 
+void Engine::addLights(const std::vector<Light>& lights){
+    lightsPoint.reserve(lightsPoint.size() + lights.size());
+    for(const Light& p : lights){
+        lightsPoint.push_back(p);
+    }
+
+    lightBuffer->destroy();
+
+    VkBufferCopy stagingCopy = {
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = lightsPoint.size() * sizeof(Light)
+    };
+
+    VkBufferUsageFlags lightUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        
+    lightBuffer = std::make_unique<Buffer>(m_device, m_allocator, lightsPoint.size() * sizeof(Light), 
+        lightUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+
+    VkBufferDeviceAddressInfo bdaInfo {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = lightBuffer->buffer
+    };
+    lightBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
+
+    Buffer stagingBuffer = Buffer(m_device, m_allocator, lightsPoint.size() * sizeof(Light), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+	
+    if (stagingBuffer.allocationInfo.pMappedData == nullptr) {
+		throw std::runtime_error("Material staging buffer not mapped.");
+	}
+
+	memcpy(stagingBuffer.allocationInfo.pMappedData, lightsPoint.data(), lightsPoint.size() * sizeof(Light));
+	prepImmediateTransfer();
+	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer.buffer, lightBuffer->buffer, 1, &stagingCopy);
+    submitImmediateTransfer();
+    
+}
+
 bool Engine::loadGLTF(std::filesystem::path filePath){
     std::cout << "Loading GLTF: " << filePath << std::endl;
     
@@ -898,9 +1009,10 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
     std::vector<std::shared_ptr<Image>> images;
     std::vector<std::string> imageNames;
     std::vector<std::string> materialNames;
+    std::vector<Light> lights;
     std::vector<RenderPass> passTypes;
 
-    fastgltf::Parser parser;
+    fastgltf::Parser parser(fastgltf::Extensions::KHR_lights_punctual);
 
     auto gltfOptions =  fastgltf::Options::DontRequireValidAssetMember | fastgltf::Options::AllowDouble | fastgltf::Options::LoadExternalBuffers;
 
@@ -1194,6 +1306,15 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
                     });
             }
 
+            glm::vec3 minPos = vertices.at(initialVert).position;
+            glm::vec3 maxPos = vertices.at(initialVert).position;
+            for (size_t i = initialVert; i < vertices.size(); i++) {
+                minPos = glm::min(minPos, vertices.at(i).position);
+                maxPos = glm::max(maxPos, vertices.at(i).position);
+            }
+            newSurface.bounds.origin = (maxPos + minPos) / 2.0f;
+            newSurface.bounds.extents = (maxPos - minPos) / 2.0f;
+
             auto normAttribute = prim.findAttribute("NORMAL");
             if (normAttribute != prim.attributes.end()) {
                 auto normAccessor = asset->accessors[normAttribute->accessorIndex];
@@ -1224,6 +1345,16 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
                     });
             }
 
+            //TANGENT
+            auto tanAttribute = prim.findAttribute("TANGENT");
+            if (tanAttribute != prim.attributes.end()) {
+                auto tanAccessor = asset->accessors[tanAttribute->accessorIndex];
+                fastgltf::iterateAccessorWithIndex<glm::vec4>(asset.get(), tanAccessor,
+                    [&](glm::vec4 v, size_t idx) {
+                        vertices[initialVert + idx].tangent = v;
+                    });
+            }
+
             if(prim.materialIndex.has_value()){
                 newSurface.matIndex = matNameToIndex.at(materialNames.at(prim.materialIndex.value()));
                 newSurface.type = passTypes.at(prim.materialIndex.value());
@@ -1238,15 +1369,52 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
         newMesh->data = uploadMesh(indices, vertices);
     }
 
+    //TODO load all light info and add light types
+    for (fastgltf::Light& light : asset->lights){
+        Light p{};
+        p.lightColor.x = light.color.x();
+        p.lightColor.y = light.color.y();
+        p.lightColor.z = light.color.z();
+        p.intensity = 1.0f;
+        if(light.intensity > 0.0f){
+            p.intensity = light.intensity;
+        }
+        
+        if(light.range.has_value() && light.range.value() > 0.0f){
+            p.range = light.range.value();
+        }else{
+            p.range = FLT_MAX;
+        }
+
+        if(light.type == fastgltf::LightType::Point){
+            p.type = 0;
+        }else if(light.type == fastgltf::LightType::Directional){
+            p.type = 1;
+        }else{
+            p.type = 2; //Spot light
+            p.innerConeAngle = light.innerConeAngle.value_or(0.0f);
+            p.outerConeAngle = light.outerConeAngle.value_or(30.0f);
+        }
+
+
+        lights.push_back(p);
+        std::cout << "Loading light: " << light.name.c_str() << std::endl;
+    }
+
     //Extract all node transforms & meshes
     for (fastgltf::Node& node: asset->nodes){
         std::shared_ptr<GLTFNode> newNode = std::make_shared<GLTFNode>();
+        newNode->lightIndex = -1;
 
         std::cout << "- Loading Node: " << node.name.c_str() << std::endl;
 
         if(node.meshIndex.has_value()){
             newNode->mesh = meshes.at(node.meshIndex.value());
         }
+        if(node.lightIndex.has_value()){
+            newNode->lightIndex = node.lightIndex.value();
+        }
+
         nodes.push_back(newNode);
 
         fastgltf:: math::fmat4x4 matrix = fastgltf::getTransformMatrix(node);
@@ -1260,7 +1428,7 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
         fastgltf::Node& node = asset->nodes.at(nodeIndex);
         std::shared_ptr<GLTFNode> gltfNode = nodes.at(nodeIndex);
 
-        for (uint32_t c : node.children){
+        for (size_t c : node.children){
             gltfNode->children.push_back(nodes[c]);
             nodes[c]->parent = gltfNode;
         }
@@ -1272,7 +1440,25 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
             scene->topNodes.push_back(node);
 
             node->refreshTransform(glm::mat4(1.0f));
+            
+            //update light positions
+            if(node->lightIndex < 0){
+                continue;
+            }
+            lights.at(node->lightIndex).lightPos = node->worldTransform[3];
+            
+            if(lights.at(node->lightIndex).type == 1 || lights.at(node->lightIndex).type == 2){ //direcitonal or spot
+                glm::vec4 localForward(0.0f, 0.0f, -1.0f, 0.0f);
+                glm::vec4 worldDir = node->worldTransform * localForward;
+                lights.at(node->lightIndex).lightDir = glm::normalize(glm::vec3(worldDir));
+            }else{
+                lights.at(node->lightIndex).lightDir = glm::vec3(0.0f);
+            }
         }
+    }
+
+    if(lights.size() > 0){
+        addLights(lights);
     }
 
     loadedGLTFs.insert({filePath.filename().generic_string(), scene});
@@ -1364,19 +1550,20 @@ void Engine::draw(){
     vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
 
  	drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    resolveImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     depthImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     //Draw
     drawMeshes(cmd);
 
-    drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    resolveImage->transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 	m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    drawImage->copyTo(cmd, m_swapchain->images.at(index));
+    resolveImage->copyTo(cmd, m_swapchain->images.at(index));
 
     m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     drawDearImGui(cmd, m_swapchain->images.at(index).view);
     m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-    // m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
 	vkEndCommandBuffer(cmd);
 
     VkCommandBufferSubmitInfo commandBufferSubmitInfo = {
@@ -1448,8 +1635,11 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     color_attachment.pNext = nullptr;
     color_attachment.imageView = drawImage->view;
     color_attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color_attachment.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color_attachment.resolveImageView = resolveImage->view;
+    color_attachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
     color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     
     VkRenderingAttachmentInfo depth_attachment = {};
     depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -1457,7 +1647,7 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     depth_attachment.imageView = depthImage->view;
     depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth_attachment.clearValue.depthStencil.depth = 0.0f;
     
     VkRenderingInfo rendering_info = {};
@@ -1512,16 +1702,16 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    for(const Renderable& r : transparentRenderables){
-        pcs.vertexBuffer = r.vertexBufferAddress;
-        pcs.materialIndex = r.materialIndex;
-        pcs.modelMatrix = r.modelMat;
+    for(uint32_t index : transparentRenderablesIndices){
+        pcs.vertexBuffer = transparentRenderables.at(index).vertexBufferAddress;
+        pcs.materialIndex = transparentRenderables.at(index).materialIndex;
+        pcs.modelMatrix = transparentRenderables.at(index).modelMat;
         vkCmdPushConstants(cmd, meshPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstants), &pcs);
-        vkCmdBindIndexBuffer(cmd, r.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, r.indexCount, 1, r.firstIndex, 0, 0);
+        vkCmdBindIndexBuffer(cmd, transparentRenderables.at(index).indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, transparentRenderables.at(index).indexCount, 1, transparentRenderables.at(index).firstIndex, 0, 0);
 
         stats.drawCallCount++;
-        stats.triCount += r.indexCount / 3;
+        stats.triCount += transparentRenderables.at(index).indexCount / 3;
     }
 
     vkCmdEndRendering(cmd);
@@ -1538,7 +1728,7 @@ void Engine::drawDearImGui(VkCommandBuffer cmd, VkImageView view){
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .pNext = nullptr,
         .imageView = view,
-        .imageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     };       
@@ -1627,11 +1817,13 @@ void Engine::run(){
         auto updateStart = std::chrono::system_clock::now();
         opaqueRenderables.clear();
         transparentRenderables.clear();
+        transparentRenderablesIndices.clear();
         for(auto& [name, scene] : loadedGLTFs){
             for(auto& node : scene->topNodes){
                 createRenderablesFromNode(node);
             }
         }
+        sortTransparentRenderables();
         updateScene();
         auto updateEnd = std::chrono::system_clock::now();    
         auto updateElapsed = std::chrono::duration_cast<std::chrono::microseconds>(updateEnd - updateStart);
@@ -1650,8 +1842,3 @@ void Engine::run(){
         lastTime = currentTime; 
     }
 }
-
-//TODO gltf scene/node loading
-//add bool for active/inactive, skip inactive in creating renderable list
-//each frame in update scene iterate over tree loaded scene nodes drawing
-//
