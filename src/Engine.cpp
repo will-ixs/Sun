@@ -105,9 +105,6 @@ void Engine::cleanup(){
     materialBuffer->destroy();
     lightBuffer->destroy();
 
-    whiteImage->destroy();
-    grayImage->destroy();
-    blackImage->destroy();
     checkerboardImage->destroy();
 
     vkDestroySampler(m_device, defaultLinearSampler, nullptr);
@@ -580,18 +577,10 @@ void Engine::initData(){
 	sampler.minFilter = VK_FILTER_LINEAR;
 	vkCreateSampler(m_device, &sampler, nullptr, &defaultLinearSampler);
 
-    // TextureData texData = {
-    //     .texture = checkerboardImage,
-    //     .sampler = defaultNearestSampler
-    // };
-    // addTexture(texData, "CHECKERBOARD");
-
     meshThread = std::thread(&Engine::meshUploader, this);
-    pathQueue.push("..\\..\\resources\\main1_sponza\\NewSponza_Main_glTF_003.gltf");
-    pathQueue.push("..\\..\\resources\\main1_sponza\\NewSponza_Curtains_glTF.gltf");
-    pathQueue.push("QUIT");   
+    pathQueue.push("..\\..\\resources\\khrgltf_sponza_lit\\Sponza.gltf");
+    pathQueue.push("QUIT");
 
-    
     //Update descriptors
     VkDescriptorBufferInfo uboInfo = {
         .buffer = uboBuffer->buffer,
@@ -1208,7 +1197,6 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
         }else{
             passTypes.push_back(RenderPass::OPAQUE);
         }
-
         //create textureData 
         if(material.pbrData.baseColorTexture.has_value()){
             size_t assetTexIndex = material.pbrData.baseColorTexture.value().textureIndex;
@@ -1369,7 +1357,6 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
         newMesh->data = uploadMesh(indices, vertices);
     }
 
-    //TODO load all light info and add light types
     for (fastgltf::Light& light : asset->lights){
         Light p{};
         p.lightColor.x = light.color.x();

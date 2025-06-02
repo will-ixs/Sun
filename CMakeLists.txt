@@ -112,6 +112,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(fastgltf)
 
+
+set(KTX_FEATURE_STATIC_LIBRARY ON)
+set(KTX_FEATURE_LOADTEST_APPS OFF)
+set(KTX_FEATURE_TOOLS OFF)
+set(KTX_FEATURE_DOC OFF)
+set(KTX_FEATURE_TESTS OFF)
+FetchContent_Declare(
+    libktx
+    GIT_REPOSITORY https://github.com/KhronosGroup/KTX-Software.git
+    GIT_TAG        v4.4.0
+)
+FetchContent_MakeAvailable(libktx)
+
+
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -151,6 +165,7 @@ target_include_directories(VulkanProject PRIVATE
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
     ${VulkanMemoryAllocator_SOURCE_DIR}/include
+    ${libktx_SOURCE_DIR}/include
 )
 
 # Link Libraries
@@ -161,6 +176,7 @@ target_link_libraries(VulkanProject PRIVATE
     vk-bootstrap::vk-bootstrap
     fastgltf::fastgltf
     imgui
+    ktx
 )
 
 #message(STATUS "Vulkan Include Directory: ${Vulkan_INCLUDE_DIRS}")

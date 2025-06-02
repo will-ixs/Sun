@@ -199,12 +199,18 @@ vec3 calculateSpotLight(Light s, vec3 albedo, vec2 metal_rough, vec3 normal){
     return (kD * albedo / PI + specular) * radiance * NdotL; 
 }
 
+
+const float alphaCutoffTest = 0.5f;
 void main() 
 {	
 	Material mat = sceneData.matBuffer.materials[PushConstants.materialIndex];
 
 	//pbr
-    vec3 albedo = pow(texture(Sampler2D[mat.baseColorIndex], inUV).xyz, vec3(2.2));
+    vec4 albedo = texture(Sampler2D[mat.baseColorIndex], inUV);
+    if(albedo.a < alphaCutoffTest){
+        discard;
+    }
+    albedo = pow(albedo, vec4(2.2));
 	vec2 metal_rough = texture(Sampler2D[mat.metallicRoughnessIndex], inUV).bg;
     
 	vec3 normalMap = texture(Sampler2D[mat.normalIndex], inUV).xyz * 2.0 - 1.0;
@@ -214,11 +220,11 @@ void main()
     for(uint i = 0; i < sceneData.numLights; i++){
         Light l = sceneData.lightBuffer.lights[i];
         if(l.type == 0){
-            color += calculatePointLight(l, albedo, metal_rough, normal);
+            color += calculatePointLight(l, albedo.xyz, metal_rough, normal);
         }else if(l.type == 1){
-            color += calculateDirectionalLight(l, albedo, metal_rough, normal);
+            color += calculateDirectionalLight(l, albedo.xyz, metal_rough, normal);
         }else if(l.type == 2){
-            color += calculateSpotLight(l, albedo, metal_rough, normal);
+            color += calculateSpotLight(l, albedo.xyz, metal_rough, normal);
         }
     }
 
