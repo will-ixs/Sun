@@ -19,12 +19,11 @@ class Swapchain;
 class Image;
 class Buffer;
 class PipelineBuilder;
-// class MeshUploader;
 class Camera;
 
 class Engine
 {
-private:
+    private:
     //Initialization
     void initSDL3();
     void initVulkan();
@@ -36,18 +35,20 @@ private:
     void initPipelines();
     void initData();
     void initDearImGui();
-
+    
     //Util
     ImmediateTransfer m_immTransfer;
-    EngineStats stats;
+    EngineStats stats = {0};
     void prepImmediateTransfer();
     void submitImmediateTransfer();
+    
+    void updateScene();
+    void updateGUI();
     
     bool loadShader(VkShaderModule* outShader, std::string filePath);
     bool loadGLTF(std::filesystem::path filePath);
     std::shared_ptr<Image> createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped);
-    void updateScene();
-
+    
     void createRenderablesFromNode(std::shared_ptr<GLTFNode> node);
     void sortTransparentRenderables();
     bool renderableVisible(const Renderable& r, const glm::mat4& viewProj);
@@ -57,18 +58,21 @@ private:
     uint32_t addTexture(const TextureData& data, std::string name);
     MaterialData getMatFromName(std::string name) { return materials.at(matNameToIndex.find(name)->second); };
     TextureData getTexFromName(std::string name) { return textures.at(texNameToIndex.find(name)->second); };
-
+    
     
     void meshUploader();
     std::queue<std::filesystem::path> pathQueue;
     std::thread meshThread;
-
+    
     //Pipelines
     void initMeshPipelines();
-
+    void initParticlePipelines();
+    
     //drawing
     void draw();
     void drawMeshes(VkCommandBuffer cmd);
+    void drawParticles(VkCommandBuffer cmd);
+    void updateParticles(VkCommandBuffer cmd);
     void drawDearImGui(VkCommandBuffer cmd, VkImageView view);
 
     //Optons
@@ -107,6 +111,12 @@ private:
     uint32_t IMAGE_COUNT = 65536;
     
     //Pipelines
+    VkPipelineLayout particleDrawPipelineLayout;
+    VkPipeline particleDrawPipeline;
+
+    VkPipelineLayout particleComputePipelineLayout;
+    VkPipeline particleComputePipeline;
+
     VkPipelineLayout meshPipelineLayout;
     VkPipeline meshPipelineOpaque;
     VkPipeline meshPipelineTransparent;
@@ -115,6 +125,8 @@ private:
     //Queue Info
 	VkQueue m_graphicsQueue;
 	uint32_t m_graphicsQueueFamily;
+    VkQueue m_computeQueue;
+    uint32_t m_computeQueueFamily;
 	VkQueue m_transferQueue;
 	uint32_t m_transferQueueFamily;
 
@@ -128,6 +140,18 @@ private:
     std::vector<uint32_t> transparentRenderablesIndices;
     std::vector<MeshAsset> testMeshes;
     std::unique_ptr<Camera> cam;
+
+    //Particle Buffers
+    std::unique_ptr<Buffer> hostPositionBuffer;
+    std::unique_ptr<Buffer> hostVelocityBuffer;
+    std::unique_ptr<Buffer> devicePositionBufferA;
+    std::unique_ptr<Buffer> devicePositionBufferB;
+    std::unique_ptr<Buffer> deviceVelocityBuffer;
+    std::vector<glm::vec4> initialPositions;
+    std::vector<glm::vec4> initialVelocities;
+    VkDeviceAddress particlePosBufferAddressA;
+    VkDeviceAddress particlePosBufferAddressB;
+    VkDeviceAddress particleVelBufferAddress;
 
     //Scenes
     std::unordered_map<std::string, std::shared_ptr<GLTFScene>> loadedGLTFs;
@@ -144,7 +168,6 @@ private:
 
     //Lights
     std::vector<Light> lightsPoint;
-    // std::vector<SpotLight> lightsSpot;
     std::unique_ptr<Buffer> lightBuffer;
     VkDeviceAddress lightBufferAddress;
     
@@ -163,8 +186,9 @@ private:
     bool mouseCaptured = true;
     bool minimized = false;
     uint64_t initializationTime = 0;
-    uint64_t deltaTime = 0;
-    uint64_t lastTime = 0;
+    float deltaTime = 0;
+    float currentTime = 0;
+    float timeScale = 1.0f;
 
 public:
     Engine();

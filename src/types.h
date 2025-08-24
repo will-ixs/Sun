@@ -34,6 +34,21 @@ struct PushConstants{
     uint32_t materialIndex;
 };
 
+struct ParticlePushConstants{
+    glm::mat4 renderMatrix;
+    VkDeviceAddress positionBuffer;
+    VkDeviceAddress velocityBuffer;
+    glm::vec4 camWorldPos;
+};
+
+struct ParticleComputePushConstants{
+    VkDeviceAddress positionBufferA;
+    VkDeviceAddress positionBufferB;
+    VkDeviceAddress velocityBuffer;
+    float deltaTime;
+    float timeScale;
+};
+
 struct Vertex {
 	glm::vec3 position;
 	float uv_x;
@@ -59,6 +74,7 @@ struct TextureData {
 struct EngineStats {
     float initTime;
     float frameTime;
+    float particleTime;
     float sceneUpdateTime;
     float meshDrawTime;
     int triCount;

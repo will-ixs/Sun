@@ -1,0 +1,58 @@
+#version 450
+
+#extension GL_EXT_buffer_reference : require
+
+layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+const uint NUM_PARTICLES = 100000;
+const float PI = 3.14159;
+
+layout(buffer_reference, std430) buffer PositionBuffer{ 
+	vec3 pos[];
+};
+layout(buffer_reference, std430) buffer VelocityBuffer{ 
+	vec3 vel[];
+};
+
+layout( push_constant ) uniform constants
+{	
+	PositionBuffer positionBufferA;
+    VelocityBuffer velocityBuffer;
+    PositionBuffer positionBufferB;
+    float time;
+    float deltaTime;
+    float timeScale;
+} pcs;
+
+//initial velocity of 1,1,0
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    vec3 pos = pcs.positionBufferA.pos[index];
+
+    float a = 1.3f;
+    float b = 0.11f; 
+    float c = 7.0f;
+    float alpha = 10.82f;
+    float beta = 14.286f;
+
+    float h = 0;
+    if(pos.x >= 2*a*c){
+        h = ((b * PI) / (2 * a)) * (pos.x - (2*a*c));
+    }else if(pos.x > -2*a*c){
+        h = -b * sin((PI * pos.x) / (2*a));
+    }else{
+        h = ((b * PI) / (2 * a)) * (pos.x + (2*a*c));
+    }
+
+
+    float x_dot = alpha * (pos.y - h);
+    float y_dot = pos.x - pos.y + pos.z;
+    float z_dot = -beta * pos.y;
+    vec3 vel = vec3(x_dot, y_dot, z_dot);
+    
+    pos += vel * pcs.deltaTime * pcs.timeScale;
+
+    pcs.positionBufferA.pos[index] = pos;
+    pcs.velocityBuffer.vel[index] = vel;
+}
