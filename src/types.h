@@ -14,12 +14,16 @@ class Buffer;
 class Image;
 
 struct FrameData{
-	VkCommandPool commandPool;
-	VkCommandBuffer commandBuffer;
+	VkCommandPool graphicsCommandPool;
+	VkCommandBuffer graphicsCommandBuffer;
+
+	VkCommandPool computeCommandPool;
+    VkCommandBuffer computeCommandBuffer;
 
     VkSemaphore swapchainSemaphore;
     VkSemaphore renderSemaphore;
     VkFence renderFence;
+    VkFence computeFence;
 };
 
 struct ImmediateTransfer{

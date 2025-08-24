@@ -34,7 +34,7 @@
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 
-#define PARTICLE_COUNT 100000
+#define PARTICLE_COUNT 1000000
                                                           
 Engine::Engine()
 {
@@ -70,7 +70,8 @@ void Engine::cleanup(){
 	vkDestroyDescriptorSetLayout(m_device, m_descriptorLayout, nullptr);
     
     for (int i = 0; i < 2; i++) {
-        vkDestroyCommandPool(m_device, frameData[i].commandPool, nullptr);
+        vkDestroyCommandPool(m_device, frameData[i].graphicsCommandPool, nullptr);
+        vkDestroyCommandPool(m_device, frameData[i].computeCommandPool, nullptr);
 
         vkDestroyFence(m_device, frameData[i].renderFence, nullptr);
         vkDestroySemaphore(m_device, frameData[i].renderSemaphore, nullptr);
@@ -278,26 +279,37 @@ void Engine::initVulkan(){
 
 void Engine::initCommands(){
 
-    VkCommandPoolCreateInfo commandPoolInfo =  {
+    VkCommandPoolCreateInfo graphicsCommandPoolInfo =  {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = nullptr, 
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = m_graphicsQueueFamily
     };
+
+    VkCommandPoolCreateInfo computeCommandPoolInfo =  {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr, 
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = m_computeQueueFamily
+    };
 	
 	for (int i = 0; i < 2; i++) {
 
-		vkCreateCommandPool(m_device, &commandPoolInfo, nullptr, &frameData[i].commandPool);
+		vkCreateCommandPool(m_device, &graphicsCommandPoolInfo, nullptr, &frameData[i].graphicsCommandPool);
+		vkCreateCommandPool(m_device, &computeCommandPoolInfo, nullptr, &frameData[i].computeCommandPool);
 
 		VkCommandBufferAllocateInfo cmdAllocInfo = {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .pNext = nullptr,
-            .commandPool = frameData[i].commandPool,
+            .commandPool = frameData[i].graphicsCommandPool,
             .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount = 1
         };
 
-		vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &frameData[i].commandBuffer);
+		vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &frameData[i].graphicsCommandBuffer);
+
+        cmdAllocInfo.commandPool = frameData[i].computeCommandPool;
+		vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &frameData[i].computeCommandBuffer);
 	}
 
     VkCommandPoolCreateInfo transferCommandPoolInfo =  {
@@ -382,6 +394,7 @@ void Engine::initSynchronization(){
     
 	for (int i = 0; i < 2; i++) {
 		vkCreateFence(m_device, &fenceInfo, nullptr, &frameData[i].renderFence);
+		vkCreateFence(m_device, &fenceInfo, nullptr, &frameData[i].computeFence);
 
 		vkCreateSemaphore(m_device, &semInfo, nullptr, &frameData[i].swapchainSemaphore);
 		vkCreateSemaphore(m_device, &semInfo, nullptr, &frameData[i].renderSemaphore);
@@ -389,7 +402,17 @@ void Engine::initSynchronization(){
 
     vkCreateFence(m_device, &fenceInfo, nullptr, &m_immTransfer.fence);
 
-    
+    VkSemaphoreTypeCreateInfo semTypeInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+        .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+        .initialValue = 0
+    };
+    VkSemaphoreCreateInfo timelineInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = &semTypeInfo
+    };
+    vkCreateSemaphore(m_device, &timelineInfo, nullptr, &particleTLSemaphore);
+
 }
 
 void Engine::initDescriptors(){
@@ -1714,7 +1737,7 @@ void Engine::draw(){
 	}
     
     vkResetFences(m_device, 1, &getCurrentFrame().renderFence);
-    VkCommandBuffer cmd = getCurrentFrame().commandBuffer;
+    VkCommandBuffer cmd = getCurrentFrame().graphicsCommandBuffer;
     vkResetCommandBuffer(cmd, 0);
     
     VkCommandBufferBeginInfo commandBufferBeginInfo = {
@@ -1731,7 +1754,6 @@ void Engine::draw(){
     depthImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     stats.drawCallCount = 0;
-    updateParticles(cmd);
     drawParticles(cmd);
     //Draw
     // drawMeshes(cmd);
@@ -1760,6 +1782,15 @@ void Engine::draw(){
         .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
         .deviceIndex = 0
     };
+    VkSemaphoreSubmitInfo semaphoreWaitSubmitInfo2{ 
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .semaphore = particleTLSemaphore,
+        .value = particleTLValue,
+        .stageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+        .deviceIndex = 0
+    };
+    VkSemaphoreSubmitInfo waits[] = {semaphoreWaitSubmitInfo, semaphoreWaitSubmitInfo2};
 	VkSemaphoreSubmitInfo semaphoreSignalSubmitInfo{ 
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
         .pNext = nullptr,
@@ -1772,8 +1803,8 @@ void Engine::draw(){
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
         .pNext = nullptr,
         .flags = 0,
-        .waitSemaphoreInfoCount = 1,
-        .pWaitSemaphoreInfos = &semaphoreWaitSubmitInfo,
+        .waitSemaphoreInfoCount = 2,
+        .pWaitSemaphoreInfos = waits,
         .commandBufferInfoCount = 1,
         .pCommandBufferInfos = &commandBufferSubmitInfo,
         .signalSemaphoreInfoCount = 1,
@@ -1978,28 +2009,23 @@ void Engine::drawParticles(VkCommandBuffer cmd){
     }
 }
 
-void Engine::updateParticles(VkCommandBuffer cmd){
-       VkMemoryBarrier2 prevBarrier = {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-            .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-            .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT
-        };
-        VkMemoryBarrier2 graphicsBarrier = {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT
-        };
+void Engine::updateParticles(){
+    VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().computeFence, VK_TRUE, 1000000000);
+    if (fenceResult != VK_SUCCESS) {
+        throw std::runtime_error("Fence wait failed!");
+    }
+    
+    vkResetFences(m_device, 1, &getCurrentFrame().computeFence);
+    VkCommandBuffer cmd = getCurrentFrame().computeCommandBuffer;
+    vkResetCommandBuffer(cmd, 0);
+    VkCommandBufferBeginInfo commandBufferBeginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = nullptr
+    };
 
-        VkDependencyInfo dependencyInfo = {};
-        dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependencyInfo.memoryBarrierCount = 1;
-        dependencyInfo.pMemoryBarriers = &prevBarrier;
-
-        vkCmdPipelineBarrier2(cmd , &dependencyInfo);
+    vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
 
         VkPipelineBindPoint compute = VK_PIPELINE_BIND_POINT_COMPUTE;
         uint32_t particleX = (PARTICLE_COUNT + 63) / 64;
@@ -2019,9 +2045,39 @@ void Engine::updateParticles(VkCommandBuffer cmd){
         vkCmdBindPipeline(cmd, compute, particleComputePipeline);
         vkCmdPushConstants(cmd, particleComputePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticleComputePushConstants), &pcs);
         vkCmdDispatch(cmd, particleX, 1, 1);
-        
-        dependencyInfo.pMemoryBarriers = &graphicsBarrier;
-        vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+
+	vkEndCommandBuffer(cmd);
+    VkCommandBufferSubmitInfo commandBufferSubmitInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        .pNext = nullptr,
+        .commandBuffer = cmd,
+        .deviceMask = 0
+    };
+    particleTLValue++;
+	VkSemaphoreSubmitInfo semaphoreSignalSubmitInfo{ 
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .semaphore = particleTLSemaphore,
+        .value = particleTLValue,
+        .stageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+        .deviceIndex = 0
+    };
+    VkSubmitInfo2 queueSubmitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .pNext = nullptr,
+        .flags = 0,
+        .waitSemaphoreInfoCount = 0,
+        .pWaitSemaphoreInfos = nullptr,
+        .commandBufferInfoCount = 1,
+        .pCommandBufferInfos = &commandBufferSubmitInfo,
+        .signalSemaphoreInfoCount = 1,
+        .pSignalSemaphoreInfos = &semaphoreSignalSubmitInfo
+    };
+
+    VkResult submitRes = vkQueueSubmit2(m_computeQueue, 1, &queueSubmitInfo, getCurrentFrame().computeFence);
+    if(submitRes != VK_SUCCESS){
+        std::cout << "compute queue submit failed" << std::endl;
+    }        
 }
 
 void Engine::drawDearImGui(VkCommandBuffer cmd, VkImageView view){
@@ -2118,6 +2174,7 @@ void Engine::run(){
             stats.sceneUpdateTime = updateElapsed.count() / 1000.0f;
         }
         
+        updateParticles();
         draw();
         
         auto end = std::chrono::system_clock::now();    

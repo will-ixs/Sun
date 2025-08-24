@@ -68,12 +68,14 @@ class Engine
     void initMeshPipelines();
     void initParticlePipelines();
     
-    //drawing
+    //Drawing
     void draw();
     void drawMeshes(VkCommandBuffer cmd);
     void drawParticles(VkCommandBuffer cmd);
-    void updateParticles(VkCommandBuffer cmd);
     void drawDearImGui(VkCommandBuffer cmd, VkImageView view);
+    
+    //Compute
+    void updateParticles();
 
     //Optons
     bool m_bUseValidation = false;
@@ -152,6 +154,9 @@ class Engine
     VkDeviceAddress particlePosBufferAddressA;
     VkDeviceAddress particlePosBufferAddressB;
     VkDeviceAddress particleVelBufferAddress;
+
+    VkSemaphore particleTLSemaphore;
+    uint64_t particleTLValue = 0;
 
     //Scenes
     std::unordered_map<std::string, std::shared_ptr<GLTFScene>> loadedGLTFs;
