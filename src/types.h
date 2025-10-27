@@ -53,6 +53,35 @@ struct ParticleComputePushConstants{
     float timeScale;
 };
 
+
+//REGISTERING: creating pipeline, mapping type to pipeline, and initial velocity
+//CREATING: creating an instance of a particle system, has a type, use type to fill velocity buffer
+//fill position buffers at random 
+//setting its deathTime, creating its semaphore
+//todo
+//make one type to VkPipeline
+//map when particle system of that type is created use general host staging buffer
+//to memcpy to GPU initial positions
+//change draw and update to bind pipeline depending on ParticleType and 
+//use framesAlive %2 to select position buffer for draw
+//and choose which is previous buffer for compute dispatch
+//make sure to use each systems Semaphore and TLValue 
+struct ParticleSystem {
+    std::string type;
+    uint64_t particleCount;
+    float lifeTime;
+    std::unique_ptr<Buffer> devicePositionBufferA;
+    std::unique_ptr<Buffer> devicePositionBufferB;
+    std::unique_ptr<Buffer> deviceVelocityBuffer;
+    VkDeviceAddress positionBufferA;
+    VkDeviceAddress positionBufferB;
+    VkDeviceAddress velocityBuffer;
+    VkSemaphore particleTLSemaphore;
+    uint64_t particleTLValue;
+    uint64_t framesAlive;
+};
+
+
 struct Vertex {
 	glm::vec3 position;
 	float uv_x;

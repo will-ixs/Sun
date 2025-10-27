@@ -41,7 +41,10 @@ class Engine
     EngineStats stats = {0};
     void prepImmediateTransfer();
     void submitImmediateTransfer();
-    
+
+    void registerDefaultParticleSystems();
+    void registerParticleSystem(std::string type, glm::vec3 defaultVelocity = glm::vec3(0.0f));
+    void createParticleSystem(std::string type, uint32_t particleCount, float lifeTime);
     void updateScene();
     void updateGUI();
     
@@ -115,6 +118,9 @@ class Engine
     //Pipelines
     VkPipelineLayout particleDrawPipelineLayout;
     VkPipeline particleDrawPipeline;
+
+    std::unordered_map<std::string, VkPipeline> particlePipelineMap; //use reflection to map to ENUM instead of string?
+    std::unordered_map<std::string, glm::vec3> particleVelocityMap;
 
     VkPipelineLayout particleComputePipelineLayout;
     VkPipeline particleComputePipeline;

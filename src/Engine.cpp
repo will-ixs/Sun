@@ -34,7 +34,7 @@
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 
-#define PARTICLE_COUNT 1000000
+#define PARTICLE_COUNT 100000
                                                           
 Engine::Engine()
 {
@@ -56,9 +56,9 @@ void Engine::cleanup(){
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 
-    vkDestroyPipelineLayout(m_device, meshPipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, meshPipelineOpaque, nullptr);
-    vkDestroyPipeline(m_device, meshPipelineTransparent, nullptr);
+    // vkDestroyPipelineLayout(m_device, meshPipelineLayout, nullptr);
+    // vkDestroyPipeline(m_device, meshPipelineOpaque, nullptr);
+    // vkDestroyPipeline(m_device, meshPipelineTransparent, nullptr);
     vkDestroyPipelineLayout(m_device, particleDrawPipelineLayout, nullptr);
     vkDestroyPipelineLayout(m_device, particleComputePipelineLayout, nullptr);
     vkDestroyPipeline(m_device, particleDrawPipeline, nullptr);
@@ -263,10 +263,14 @@ void Engine::initVulkan(){
 
     m_graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
     m_graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
-    m_computeQueue = vkbDevice.get_queue(vkb::QueueType::compute).value();
-    m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::compute).value();
-    m_transferQueue = vkbDevice.get_queue(vkb::QueueType::transfer).value();
-    m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::transfer).value();
+    // m_computeQueue = vkbDevice.get_queue(vkb::QueueType::compute).value();
+    // m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::compute).value();
+    m_computeQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+    m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+    // m_transferQueue = vkbDevice.get_queue(vkb::QueueType::transfer).value();
+    // m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::transfer).value();
+    m_transferQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+    m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
 
     VmaAllocatorCreateInfo allocatorInfo = {
         .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
@@ -498,8 +502,10 @@ void Engine::initDescriptors(){
 
 void Engine::initPipelines(){
     pb = std::make_unique<PipelineBuilder>();
-    initMeshPipelines();
+    //TODO: add simple shaders in this branch
+    // initMeshPipelines();
     initParticlePipelines();
+    registerDefaultParticleSystems();
 }
 
 void Engine::initMeshPipelines(){
@@ -699,77 +705,6 @@ void Engine::initData(){
 	sampler.minFilter = VK_FILTER_LINEAR;
 	vkCreateSampler(m_device, &sampler, nullptr, &defaultLinearSampler);
 
-
-    //Create Particle Buffers
-    initialPositions.resize(PARTICLE_COUNT);
-    initialVelocities.resize(PARTICLE_COUNT);
-    std::minstd_rand rng(std::random_device{}());
-    std::uniform_real_distribution<float> unitDist(-1.0f, 1.0f);
-
-    for (size_t i = 0; i < PARTICLE_COUNT; ++i) {
-        initialPositions.at(i) = glm::vec4(unitDist(rng), unitDist(rng), unitDist(rng), 0);
-        initialVelocities.at(i) = glm::vec4(0.0, 1.0, 1.05, 0);
-    }
-
-    hostPositionBuffer = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
-        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-
-    devicePositionBufferA = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
-        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
-    
-    devicePositionBufferB = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
-        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
-
-    hostVelocityBuffer = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
-        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-    
-    deviceVelocityBuffer = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
-        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
-
-    VkBufferDeviceAddressInfo positionAddressInfoA = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-        .pNext = nullptr,
-        .buffer = devicePositionBufferA->buffer
-    };
-    VkBufferDeviceAddressInfo positionAddressInfoB = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-        .pNext = nullptr,
-        .buffer = devicePositionBufferB->buffer
-    };
-    VkBufferDeviceAddressInfo velocityAddressInfo = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-        .pNext = nullptr,
-        .buffer = deviceVelocityBuffer->buffer
-    };
-    particlePosBufferAddressA = vkGetBufferDeviceAddress(m_device, &positionAddressInfoA);
-    particlePosBufferAddressB = vkGetBufferDeviceAddress(m_device, &positionAddressInfoB);
-    particleVelBufferAddress = vkGetBufferDeviceAddress(m_device, &velocityAddressInfo);
-    
-    if (hostPositionBuffer->allocationInfo.pMappedData == nullptr) {
-        throw std::runtime_error("Host position buffer not mapped.");
-    }
-    memcpy(hostPositionBuffer->allocationInfo.pMappedData, initialPositions.data(), sizeof(glm::vec4) * PARTICLE_COUNT);
-    if (hostVelocityBuffer->allocationInfo.pMappedData == nullptr) {
-        throw std::runtime_error("Host position buffer not mapped.");
-    }
-    memcpy(hostVelocityBuffer->allocationInfo.pMappedData, initialVelocities.data(), sizeof(glm::vec4) * PARTICLE_COUNT);
-
-    VkBufferCopy posCopy = {
-        .srcOffset = 0,
-        .dstOffset = 0,
-        .size = PARTICLE_COUNT * sizeof(glm::vec4)
-    };
-    prepImmediateTransfer();
-    vkCmdCopyBuffer(m_immTransfer.buffer, hostPositionBuffer->buffer, devicePositionBufferA->buffer, 1, &posCopy);
-    vkCmdCopyBuffer(m_immTransfer.buffer, hostPositionBuffer->buffer, devicePositionBufferB->buffer, 1, &posCopy);
-    vkCmdCopyBuffer(m_immTransfer.buffer, hostVelocityBuffer->buffer, deviceVelocityBuffer->buffer, 1, &posCopy);
-    submitImmediateTransfer();
-
     //Update descriptors
     VkDescriptorBufferInfo uboInfo = {
         .buffer = uboBuffer->buffer,
@@ -838,6 +773,7 @@ void Engine::initDearImGui(){
 bool Engine::loadShader(VkShaderModule* outShader, std::string filePath) {
     std::ifstream file(filePath, std::ios::ate | std::ios::binary);
 	if (!file.is_open()) {
+        std::cout << "Shaderfile not found" << std::endl;
         return false;
 	}
 	size_t fileSize = (size_t)file.tellg();
@@ -855,6 +791,7 @@ bool Engine::loadShader(VkShaderModule* outShader, std::string filePath) {
     };
 
 	if(vkCreateShaderModule(m_device, &shader, nullptr, outShader) != VK_SUCCESS){
+        std::cout << "Failed to create shader module" << std::endl;
         return false;
     }
     return true;
@@ -1715,6 +1652,91 @@ void Engine::submitImmediateTransfer(){
 	vkQueueSubmit2(m_transferQueue, 1, &submit, m_immTransfer.fence);
 
 	vkWaitForFences(m_device, 1, &m_immTransfer.fence, true, 9999999999);
+}
+
+void Engine::registerDefaultParticleSystems(){
+    registerParticleSystem("Lorenz", glm::vec3(0.0, 1.0, 1.05)); //?enum for default position, RANDOM, CENTERED : rn all random in 1x1 unit cube
+    registerParticleSystem("Chen", glm::vec3(0.1, 0.3, -0.6));
+    registerParticleSystem("Chua", glm::vec3(1.0, 1.0, 0.0));
+    registerParticleSystem("Rossler", glm::vec3(0.0, 0.0, 0.0));
+}
+
+void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity){
+
+}
+
+void Engine::createParticleSystem(std::string type, uint32_t particleCount, float lifeTime){
+    /*   
+    ParticleSystem ps = {};
+
+    initialPositions.resize(particleCount);
+    initialVelocities.resize(particleCount);
+    std::minstd_rand rng(std::random_device{}());
+    std::uniform_real_distribution<float> unitDist(-1.0f, 1.0f);
+
+    for (size_t i = 0; i < PARTICLE_COUNT; ++i) {
+        initialPositions.at(i) = glm::vec4(unitDist(rng), unitDist(rng), unitDist(rng), 0);
+        initialVelocities.at(i) = glm::vec4(defaultVelocity, 0);
+    }
+
+    Buffer positionStagingBuffer = Buffer(m_device, m_allocator, particleCount * sizeof(glm::vec4),
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
+        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+    Buffer velocityStagingBuffer = Buffer(m_device, m_allocator, particleCount * sizeof(glm::vec4),
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
+        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+
+    devicePositionBufferA = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+    
+    devicePositionBufferB = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+    
+    deviceVelocityBuffer = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+
+    VkBufferDeviceAddressInfo positionAddressInfoA = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = devicePositionBufferA->buffer
+    };
+    VkBufferDeviceAddressInfo positionAddressInfoB = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = devicePositionBufferB->buffer
+    };
+    VkBufferDeviceAddressInfo velocityAddressInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = nullptr,
+        .buffer = deviceVelocityBuffer->buffer
+    };
+    particlePosBufferAddressA = vkGetBufferDeviceAddress(m_device, &positionAddressInfoA);
+    particlePosBufferAddressB = vkGetBufferDeviceAddress(m_device, &positionAddressInfoB);
+    particleVelBufferAddress = vkGetBufferDeviceAddress(m_device, &velocityAddressInfo);
+    
+    if (hostPositionBuffer->allocationInfo.pMappedData == nullptr) {
+        throw std::runtime_error("Host position buffer not mapped.");
+    }
+    memcpy(hostPositionBuffer->allocationInfo.pMappedData, initialPositions.data(), sizeof(glm::vec4) * PARTICLE_COUNT);
+    if (hostVelocityBuffer->allocationInfo.pMappedData == nullptr) {
+        throw std::runtime_error("Host position buffer not mapped.");
+    }
+    memcpy(hostVelocityBuffer->allocationInfo.pMappedData, initialVelocities.data(), sizeof(glm::vec4) * PARTICLE_COUNT);
+
+    VkBufferCopy posCopy = {
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = PARTICLE_COUNT * sizeof(glm::vec4)
+    };
+    prepImmediateTransfer();
+    vkCmdCopyBuffer(m_immTransfer.buffer, hostPositionBuffer->buffer, devicePositionBufferA->buffer, 1, &posCopy);
+    vkCmdCopyBuffer(m_immTransfer.buffer, hostPositionBuffer->buffer, devicePositionBufferB->buffer, 1, &posCopy);
+    vkCmdCopyBuffer(m_immTransfer.buffer, hostVelocityBuffer->buffer, deviceVelocityBuffer->buffer, 1, &posCopy);
+    submitImmediateTransfer();*/
 }
 
 //Drawing
