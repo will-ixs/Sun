@@ -119,11 +119,14 @@ class Engine
     VkPipelineLayout particleDrawPipelineLayout;
     VkPipeline particleDrawPipeline;
 
+    VkPipelineLayout particleComputePipelineLayout;
+    VkPipelineCache particleComputePipelineCache;
     std::unordered_map<std::string, VkPipeline> particlePipelineMap; //use reflection to map to ENUM instead of string?
     std::unordered_map<std::string, glm::vec3> particleVelocityMap;
+    std::vector<ParticleSystem> particleSystems;
 
-    VkPipelineLayout particleComputePipelineLayout;
-    VkPipeline particleComputePipeline;
+
+    VkPipeline particleComputePipeline;//dont need
 
     VkPipelineLayout meshPipelineLayout;
     VkPipeline meshPipelineOpaque;

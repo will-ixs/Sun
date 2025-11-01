@@ -114,7 +114,7 @@ void Engine::cleanup(){
     lightBuffer->destroy();
 
     hostPositionBuffer->destroy();
-    hostVelocityBuffer->destroy();
+    // hostVelocityBuffer->destroy();
     devicePositionBufferA->destroy();
     devicePositionBufferB->destroy();
     deviceVelocityBuffer->destroy();
@@ -900,7 +900,7 @@ void Engine::updateScene(){
     ubo.viewproj = glm::mat4(1.0f) * cam->getProjMatrix() * cam->getViewMatrix();
     ubo.materialBuffer = materialBufferAddress;
     ubo.lightBuffer = lightBufferAddress;
-    ubo.numLights = lightsPoint.size();
+    ubo.numLights = static_cast<uint32_t>(lightsPoint.size());
     memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
 }
 
@@ -1549,7 +1549,7 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
             newNode->mesh = meshes.at(node.meshIndex.value());
         }
         if(node.lightIndex.has_value()){
-            newNode->lightIndex = node.lightIndex.value();
+            newNode->lightIndex = static_cast<int32_t>(node.lightIndex.value());
         }
 
         nodes.push_back(newNode);
@@ -1662,12 +1662,93 @@ void Engine::registerDefaultParticleSystems(){
 }
 
 void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity){
+    VkShaderModule comp;
+    std::string shaderFileName = "../shaders/particle_" + name + ".comp.spv";
+	if (!loadShader(&comp, shaderFileName)) {
+		std::cout << "Error when building the " << shaderFileName << " shader module." << std::endl;
+	}
+	else {
+		std::cout << "Succesfully built " << shaderFileName << " shader module." << std::endl;
+	}
 
+    if (particleComputePipelineLayout == VK_NULL_HANDLE){
+        VkPushConstantRange pcComp = {
+            .stageFlags = VK_SHADER_STAGE_ALL,
+            .offset = 0,
+            .size = sizeof(ParticleComputePushConstants)
+        };
+        VkPipelineLayoutCreateInfo layoutInfo = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .setLayoutCount = 1,
+            .pSetLayouts = &m_descriptorLayout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &pcComp
+        };
+        vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &particleComputePipelineLayout); 
+    }
+
+    if (particleComputePipelineCache == VK_NULL_HANDLE){
+        VkPipelineCacheCreateInfo particleComputeCacheInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+            .pNext = nullptr
+        };
+
+        vkCreatePipelineCache(m_device, &particleComputeCacheInfo, nullptr, &particleComputePipelineCache);
+    }
+
+    VkPipelineShaderStageCreateInfo particleComputeStageInfo {
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = comp,
+        .pName = "main"
+    };
+    VkComputePipelineCreateInfo computePipelineCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = particleComputeStageInfo,
+        .layout = particleComputePipelineLayout
+    };
+    
+	vkCreateComputePipelines(m_device, particleComputePipelineCache, 1, &computePipelineCreateInfo, nullptr, &particleComputePipeline);
+
+    particlePipelineMap.insert_or_assign(name, particleComputePipeline);
+    particleVelocityMap.insert_or_assign(name, defaultVelocity);
 }
 
-void Engine::createParticleSystem(std::string type, uint32_t particleCount, float lifeTime){
-    /*   
-    ParticleSystem ps = {};
+//TODO implement in draw and update
+// remove from particleSystems when lifetime over
+// alternative position buffers
+// increment timeline value
+//switch buffer on framesAlive
+
+void Engine::createParticleSystem(std::string name, uint32_t particleCount, float lifeTime){
+    //CREATING: creating an instance of a particle system, has a type, use type to fill velocity buffer
+    //fill position buffers at random 
+    //setting its deathTime, creating its semaphore
+    ParticleSystem ps = {
+        .type = name,
+        .particleCount = particleCount,
+        .lifeTime = lifeTime,
+        //device buffers
+        //buffer addressess
+        //semaphore
+        .particleTLValue = 0,
+        .framesAlive = 0
+    };
+
+    if (particleVelocityMap.count(name) == 0){
+        std::cout << "Failed to read " << name << " particle velocity. Make sure you register it before creating it." << std::endl;
+        return;
+    }    
+    if (particlePipelineMap.count(name) == 0){
+        std::cout << "Failed to read " << name << " particle pipeline. Make sure you register it before creating it." << std::endl;
+        return;
+    }
+
+    glm::vec3 defaultVel = particleVelocityMap.at(name);
 
     initialPositions.resize(particleCount);
     initialVelocities.resize(particleCount);
@@ -1676,7 +1757,7 @@ void Engine::createParticleSystem(std::string type, uint32_t particleCount, floa
 
     for (size_t i = 0; i < PARTICLE_COUNT; ++i) {
         initialPositions.at(i) = glm::vec4(unitDist(rng), unitDist(rng), unitDist(rng), 0);
-        initialVelocities.at(i) = glm::vec4(defaultVelocity, 0);
+        initialVelocities.at(i) = glm::vec4(defaultVel, 0);
     }
 
     Buffer positionStagingBuffer = Buffer(m_device, m_allocator, particleCount * sizeof(glm::vec4),
@@ -1687,15 +1768,15 @@ void Engine::createParticleSystem(std::string type, uint32_t particleCount, floa
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
         VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
-    devicePositionBufferA = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
+    ps.devicePositionBufferA = std::make_unique<Buffer>(m_device, m_allocator, particleCount * sizeof(glm::vec4), 
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
         VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
     
-    devicePositionBufferB = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
+    ps.devicePositionBufferB = std::make_unique<Buffer>(m_device, m_allocator, particleCount * sizeof(glm::vec4), 
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
         VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
     
-    deviceVelocityBuffer = std::make_unique<Buffer>(m_device, m_allocator, PARTICLE_COUNT * sizeof(glm::vec4), 
+    ps.deviceVelocityBuffer = std::make_unique<Buffer>(m_device, m_allocator, particleCount * sizeof(glm::vec4), 
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
         VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
 
@@ -1714,29 +1795,42 @@ void Engine::createParticleSystem(std::string type, uint32_t particleCount, floa
         .pNext = nullptr,
         .buffer = deviceVelocityBuffer->buffer
     };
-    particlePosBufferAddressA = vkGetBufferDeviceAddress(m_device, &positionAddressInfoA);
-    particlePosBufferAddressB = vkGetBufferDeviceAddress(m_device, &positionAddressInfoB);
-    particleVelBufferAddress = vkGetBufferDeviceAddress(m_device, &velocityAddressInfo);
+    ps.positionBufferA = vkGetBufferDeviceAddress(m_device, &positionAddressInfoA);
+    ps.positionBufferB = vkGetBufferDeviceAddress(m_device, &positionAddressInfoB);
+    ps.velocityBuffer = vkGetBufferDeviceAddress(m_device, &velocityAddressInfo);
     
-    if (hostPositionBuffer->allocationInfo.pMappedData == nullptr) {
+    if (positionStagingBuffer.allocationInfo.pMappedData == nullptr) {
         throw std::runtime_error("Host position buffer not mapped.");
     }
-    memcpy(hostPositionBuffer->allocationInfo.pMappedData, initialPositions.data(), sizeof(glm::vec4) * PARTICLE_COUNT);
-    if (hostVelocityBuffer->allocationInfo.pMappedData == nullptr) {
+    memcpy(positionStagingBuffer.allocationInfo.pMappedData, initialPositions.data(), sizeof(glm::vec4) * particleCount);
+    if (velocityStagingBuffer.allocationInfo.pMappedData == nullptr) {
         throw std::runtime_error("Host position buffer not mapped.");
     }
-    memcpy(hostVelocityBuffer->allocationInfo.pMappedData, initialVelocities.data(), sizeof(glm::vec4) * PARTICLE_COUNT);
+    memcpy(velocityStagingBuffer.allocationInfo.pMappedData, initialVelocities.data(), sizeof(glm::vec4) * particleCount);
 
     VkBufferCopy posCopy = {
         .srcOffset = 0,
         .dstOffset = 0,
-        .size = PARTICLE_COUNT * sizeof(glm::vec4)
+        .size = particleCount * sizeof(glm::vec4)
     };
     prepImmediateTransfer();
-    vkCmdCopyBuffer(m_immTransfer.buffer, hostPositionBuffer->buffer, devicePositionBufferA->buffer, 1, &posCopy);
-    vkCmdCopyBuffer(m_immTransfer.buffer, hostPositionBuffer->buffer, devicePositionBufferB->buffer, 1, &posCopy);
-    vkCmdCopyBuffer(m_immTransfer.buffer, hostVelocityBuffer->buffer, deviceVelocityBuffer->buffer, 1, &posCopy);
-    submitImmediateTransfer();*/
+    vkCmdCopyBuffer(m_immTransfer.buffer, positionStagingBuffer.buffer, ps.devicePositionBufferA->buffer, 1, &posCopy);
+    vkCmdCopyBuffer(m_immTransfer.buffer, positionStagingBuffer.buffer, ps.devicePositionBufferB->buffer, 1, &posCopy);
+    vkCmdCopyBuffer(m_immTransfer.buffer, velocityStagingBuffer.buffer, ps.deviceVelocityBuffer->buffer,  1, &posCopy);
+    submitImmediateTransfer();
+
+    VkSemaphoreTypeCreateInfo semTypeInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+        .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+        .initialValue = 0
+    };
+    VkSemaphoreCreateInfo timelineInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = &semTypeInfo
+    };
+    vkCreateSemaphore(m_device, &timelineInfo, nullptr, &ps.particleTLSemaphore);
+
+    particleSystems.push_back(ps);
 }
 
 //Drawing
