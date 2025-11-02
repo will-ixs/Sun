@@ -32,9 +32,9 @@
 #include "PipelineBuilder.hpp"
 #include "MeshLoader.hpp"
 
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <vulkan/vk_enum_string_helper.h>
 
-#define PARTICLE_COUNT 100000
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
                                                           
 Engine::Engine()
 {
@@ -113,11 +113,11 @@ void Engine::cleanup(){
     materialBuffer->destroy();
     lightBuffer->destroy();
 
-    hostPositionBuffer->destroy();
-    // hostVelocityBuffer->destroy();
-    devicePositionBufferA->destroy();
-    devicePositionBufferB->destroy();
-    deviceVelocityBuffer->destroy();
+    for(auto& ps: particleSystems){
+        ps.devicePositionBufferA->destroy();
+        ps.devicePositionBufferB->destroy();
+        ps.deviceVelocityBuffer->destroy();
+    }
 
     checkerboardImage->destroy();
 
@@ -506,6 +506,10 @@ void Engine::initPipelines(){
     // initMeshPipelines();
     initParticlePipelines();
     registerDefaultParticleSystems();
+    createParticleSystem("lorenz", 100000, 30.9f);
+    createParticleSystem("chua", 100000, 30.9f);
+    createParticleSystem("chen", 100000, 25.9f);
+    createParticleSystem("rossler", 100000, 30.9f);
 }
 
 void Engine::initMeshPipelines(){
@@ -580,24 +584,11 @@ void Engine::initParticlePipelines(){
 		std::cout << "Built the particle vertex shader module" << std::endl;
 	}
 
-    VkShaderModule comp;
-	if (!loadShader(&comp, "../shaders/particle_lorenz.comp.spv")) {
-		std::cout << "Error when building the particle compute shader module" << std::endl;
-	}
-	else {
-		std::cout << "Built the particle compute shader module" << std::endl;
-	}
-
     VkPushConstantRange pcDraw = {
         .stageFlags = VK_SHADER_STAGE_ALL,
         .offset = 0,
         .size = sizeof(ParticlePushConstants)
     };    
-    VkPushConstantRange pcComp = {
-        .stageFlags = VK_SHADER_STAGE_ALL,
-        .offset = 0,
-        .size = sizeof(ParticleComputePushConstants)
-    };
 
 	VkPipelineLayoutCreateInfo layoutInfo = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -609,23 +600,6 @@ void Engine::initParticlePipelines(){
         .pPushConstantRanges = &pcDraw
     };
 	vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &particleDrawPipelineLayout);
-    layoutInfo.pPushConstantRanges = &pcComp;
-	vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &particleComputePipelineLayout);
-
-    VkPipelineShaderStageCreateInfo particleComputeStageInfo {
-        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .pNext = nullptr,
-        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-        .module = comp,
-        .pName = "main"
-    };
-    VkComputePipelineCreateInfo computePipelineCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .pNext = nullptr,
-        .stage = particleComputeStageInfo,
-        .layout = particleComputePipelineLayout
-    };
-	vkCreateComputePipelines(m_device, nullptr, 1, &computePipelineCreateInfo, nullptr, &particleComputePipeline);
     
 	pb->clear();
 	pb->pipeline_layout = particleDrawPipelineLayout;
@@ -642,7 +616,6 @@ void Engine::initParticlePipelines(){
 
 	vkDestroyShaderModule(m_device, vert, nullptr);
 	vkDestroyShaderModule(m_device, frag, nullptr);
-    vkDestroyShaderModule(m_device, comp, nullptr);
 }
 
 void Engine::initData(){
@@ -1654,13 +1627,15 @@ void Engine::submitImmediateTransfer(){
 	vkWaitForFences(m_device, 1, &m_immTransfer.fence, true, 9999999999);
 }
 
+//Provides default particle systems.
 void Engine::registerDefaultParticleSystems(){
-    registerParticleSystem("Lorenz", glm::vec3(0.0, 1.0, 1.05)); //?enum for default position, RANDOM, CENTERED : rn all random in 1x1 unit cube
-    registerParticleSystem("Chen", glm::vec3(0.1, 0.3, -0.6));
-    registerParticleSystem("Chua", glm::vec3(1.0, 1.0, 0.0));
-    registerParticleSystem("Rossler", glm::vec3(0.0, 0.0, 0.0));
+    registerParticleSystem("lorenz", glm::vec3(0.0, 1.0, 1.05)); //?enum for default position, RANDOM, CENTERED : rn all random in 1x1 unit cube
+    registerParticleSystem("chen", glm::vec3(0.1, 0.3, -0.6));
+    registerParticleSystem("chua", glm::vec3(1.0, 1.0, 0.0));
+    registerParticleSystem("rossler", glm::vec3(0.0, 0.0, 0.0));
 }
 
+//Register a particle system. Save its default values to created and rendered at any time.
 void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity){
     VkShaderModule comp;
     std::string shaderFileName = "../shaders/particle_" + name + ".comp.spv";
@@ -1671,7 +1646,7 @@ void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity)
 		std::cout << "Succesfully built " << shaderFileName << " shader module." << std::endl;
 	}
 
-    if (particleComputePipelineLayout == VK_NULL_HANDLE){
+    if (particlePipelineMap.empty()){
         VkPushConstantRange pcComp = {
             .stageFlags = VK_SHADER_STAGE_ALL,
             .offset = 0,
@@ -1689,7 +1664,7 @@ void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity)
         vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &particleComputePipelineLayout); 
     }
 
-    if (particleComputePipelineCache == VK_NULL_HANDLE){
+    if (particlePipelineMap.empty()){
         VkPipelineCacheCreateInfo particleComputeCacheInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
             .pNext = nullptr
@@ -1713,25 +1688,17 @@ void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity)
     };
     
 	vkCreateComputePipelines(m_device, particleComputePipelineCache, 1, &computePipelineCreateInfo, nullptr, &particleComputePipeline);
-
     particlePipelineMap.insert_or_assign(name, particleComputePipeline);
     particleVelocityMap.insert_or_assign(name, defaultVelocity);
 }
 
-//TODO implement in draw and update
-// remove from particleSystems when lifetime over
-// alternative position buffers
-// increment timeline value
-//switch buffer on framesAlive
-
+//Create an active instance of a particle system that has been registered.
 void Engine::createParticleSystem(std::string name, uint32_t particleCount, float lifeTime){
-    //CREATING: creating an instance of a particle system, has a type, use type to fill velocity buffer
-    //fill position buffers at random 
-    //setting its deathTime, creating its semaphore
     ParticleSystem ps = {
         .type = name,
         .particleCount = particleCount,
-        .lifeTime = lifeTime,
+        .lifeTime = lifeTime * 1000.0f,
+        .spawnTime =  static_cast<double>(getTime()) / 1e6,
         //device buffers
         //buffer addressess
         //semaphore
@@ -1755,7 +1722,7 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
     std::minstd_rand rng(std::random_device{}());
     std::uniform_real_distribution<float> unitDist(-1.0f, 1.0f);
 
-    for (size_t i = 0; i < PARTICLE_COUNT; ++i) {
+    for (size_t i = 0; i < particleCount; ++i) {
         initialPositions.at(i) = glm::vec4(unitDist(rng), unitDist(rng), unitDist(rng), 0);
         initialVelocities.at(i) = glm::vec4(defaultVel, 0);
     }
@@ -1783,17 +1750,17 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
     VkBufferDeviceAddressInfo positionAddressInfoA = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
         .pNext = nullptr,
-        .buffer = devicePositionBufferA->buffer
+        .buffer = ps.devicePositionBufferA->buffer
     };
     VkBufferDeviceAddressInfo positionAddressInfoB = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
         .pNext = nullptr,
-        .buffer = devicePositionBufferB->buffer
+        .buffer = ps.devicePositionBufferB->buffer
     };
     VkBufferDeviceAddressInfo velocityAddressInfo = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
         .pNext = nullptr,
-        .buffer = deviceVelocityBuffer->buffer
+        .buffer = ps.deviceVelocityBuffer->buffer
     };
     ps.positionBufferA = vkGetBufferDeviceAddress(m_device, &positionAddressInfoA);
     ps.positionBufferB = vkGetBufferDeviceAddress(m_device, &positionAddressInfoB);
@@ -1830,10 +1797,10 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
     };
     vkCreateSemaphore(m_device, &timelineInfo, nullptr, &ps.particleTLSemaphore);
 
-    particleSystems.push_back(ps);
+    particleSystems.push_back(std::move(ps));
 }
 
-//Drawing
+//Drawing loop. Meshes and particles.
 void Engine::draw(){
     VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, VK_TRUE, 1000000000);
     if (fenceResult != VK_SUCCESS) {
@@ -1890,23 +1857,33 @@ void Engine::draw(){
         .commandBuffer = cmd,
         .deviceMask = 0
     };
-    VkSemaphoreSubmitInfo semaphoreWaitSubmitInfo{ 
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .pNext = nullptr,
-        .semaphore = getCurrentFrame().swapchainSemaphore,
-        .value = 1,
-        .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
-        .deviceIndex = 0
-    };
-    VkSemaphoreSubmitInfo semaphoreWaitSubmitInfo2{ 
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .pNext = nullptr,
-        .semaphore = particleTLSemaphore,
-        .value = particleTLValue,
-        .stageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-        .deviceIndex = 0
-    };
-    VkSemaphoreSubmitInfo waits[] = {semaphoreWaitSubmitInfo, semaphoreWaitSubmitInfo2};
+
+    std::vector<VkSemaphoreSubmitInfo> semaphoreWaits;
+    semaphoreWaits.reserve(particleSystems.size() + 1);
+    semaphoreWaits.emplace_back(
+        VkSemaphoreSubmitInfo { 
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .pNext = nullptr,
+            .semaphore = getCurrentFrame().swapchainSemaphore,
+            .value = 1,
+            .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
+            .deviceIndex = 0
+        }
+    );
+
+    for(const auto& ps: particleSystems){
+        semaphoreWaits.emplace_back(
+            VkSemaphoreSubmitInfo { 
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = nullptr,
+                .semaphore = ps.particleTLSemaphore,
+                .value = ps.particleTLValue,
+                .stageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                .deviceIndex = 0
+            }
+        );
+    }
+
 	VkSemaphoreSubmitInfo semaphoreSignalSubmitInfo{ 
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
         .pNext = nullptr,
@@ -1919,8 +1896,8 @@ void Engine::draw(){
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
         .pNext = nullptr,
         .flags = 0,
-        .waitSemaphoreInfoCount = 2,
-        .pWaitSemaphoreInfos = waits,
+        .waitSemaphoreInfoCount = static_cast<uint32_t>(semaphoreWaits.size()),
+        .pWaitSemaphoreInfos = semaphoreWaits.data(),
         .commandBufferInfoCount = 1,
         .pCommandBufferInfos = &commandBufferSubmitInfo,
         .signalSemaphoreInfoCount = 1,
@@ -2106,16 +2083,19 @@ void Engine::drawParticles(VkCommandBuffer cmd){
     ParticlePushConstants pcs;
     pcs.renderMatrix = cam->getRenderMatrix();
     pcs.camWorldPos = cam->getPos();
-    pcs.velocityBuffer = particleVelBufferAddress;        
-    if(frameNumber % 2 == 0){
-        pcs.positionBuffer = particlePosBufferAddressB;
-    }else{
-        pcs.positionBuffer = particlePosBufferAddressA;
+
+    for(const auto& ps: particleSystems){
+        pcs.velocityBuffer = ps.velocityBuffer;        
+        if(ps.framesAlive % 2 == 0){
+            pcs.positionBuffer = ps.positionBufferB;
+        }else{
+            pcs.positionBuffer = ps.positionBufferA;
+        }
+        vkCmdPushConstants(cmd, particleDrawPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticlePushConstants), &pcs);
+        vkCmdDraw(cmd, ps.particleCount, 1, 0, 0);
+        stats.drawCallCount++;
     }
 
-    vkCmdPushConstants(cmd, particleDrawPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticlePushConstants), &pcs);
-    vkCmdDraw(cmd, PARTICLE_COUNT, 1, 0, 0);
-    stats.drawCallCount++;
     vkCmdEndRendering(cmd);
     
     auto end = std::chrono::system_clock::now();    
@@ -2144,40 +2124,65 @@ void Engine::updateParticles(){
     vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
 
         VkPipelineBindPoint compute = VK_PIPELINE_BIND_POINT_COMPUTE;
-        uint32_t particleX = (PARTICLE_COUNT + 63) / 64;
-        
+
+        //remove dead particleSystems
+        double currTime = static_cast<double>(getTime()) / 1e6;
+        for(auto it = particleSystems.begin(); it != particleSystems.end();){
+            //take framesAlive convert to Time;
+            if (currTime > it->spawnTime + it->lifeTime){
+                it = particleSystems.erase(it);
+            }else{
+                it++;
+            }
+        }
+
+
         ParticleComputePushConstants pcs;
         pcs.deltaTime = deltaTime;
         pcs.timeScale = 0.0005f * timeScale;
-        pcs.velocityBuffer = particleVelBufferAddress;
-        if(frameNumber % 2 == 0){
-            pcs.positionBufferB = particlePosBufferAddressB;
-            pcs.positionBufferA = particlePosBufferAddressA;
-        }else{
-            pcs.positionBufferB = particlePosBufferAddressA;
-            pcs.positionBufferA = particlePosBufferAddressB;
+
+        for(const auto& ps : particleSystems){
+            uint32_t particleX = (static_cast<uint32_t>(ps.particleCount) + 63) / 64;
+            pcs.velocityBuffer = ps.velocityBuffer;
+            if(ps.framesAlive % 2 == 0){
+                pcs.positionBufferB = ps.positionBufferB;
+                pcs.positionBufferA = ps.positionBufferA;
+            }else{
+                pcs.positionBufferB = ps.positionBufferA;
+                pcs.positionBufferA = ps.positionBufferB;
+            }
+            
+            vkCmdBindPipeline(cmd, compute, particlePipelineMap.at(ps.type));
+            vkCmdPushConstants(cmd, particleComputePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticleComputePushConstants), &pcs);
+            vkCmdDispatch(cmd, particleX, 1, 1);
         }
-        
-        vkCmdBindPipeline(cmd, compute, particleComputePipeline);
-        vkCmdPushConstants(cmd, particleComputePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticleComputePushConstants), &pcs);
-        vkCmdDispatch(cmd, particleX, 1, 1);
 
 	vkEndCommandBuffer(cmd);
+
+
     VkCommandBufferSubmitInfo commandBufferSubmitInfo = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
         .pNext = nullptr,
         .commandBuffer = cmd,
         .deviceMask = 0
     };
-    particleTLValue++;
-	VkSemaphoreSubmitInfo semaphoreSignalSubmitInfo{ 
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .pNext = nullptr,
-        .semaphore = particleTLSemaphore,
-        .value = particleTLValue,
-        .stageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-        .deviceIndex = 0
-    };
+    std::vector<VkSemaphoreSubmitInfo> semaphoreSubmits;
+    semaphoreSubmits.reserve(particleSystems.size());
+    for(auto& ps: particleSystems){
+        ps.particleTLValue++;
+        ps.framesAlive++;
+        semaphoreSubmits.emplace_back(
+            VkSemaphoreSubmitInfo {
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = nullptr,
+                .semaphore = ps.particleTLSemaphore,
+                .value = ps.particleTLValue,
+                .stageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                .deviceIndex = 0
+            }
+        );
+    }
+
     VkSubmitInfo2 queueSubmitInfo = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
         .pNext = nullptr,
@@ -2186,14 +2191,14 @@ void Engine::updateParticles(){
         .pWaitSemaphoreInfos = nullptr,
         .commandBufferInfoCount = 1,
         .pCommandBufferInfos = &commandBufferSubmitInfo,
-        .signalSemaphoreInfoCount = 1,
-        .pSignalSemaphoreInfos = &semaphoreSignalSubmitInfo
+        .signalSemaphoreInfoCount = static_cast<uint32_t>(semaphoreSubmits.size()),
+        .pSignalSemaphoreInfos = semaphoreSubmits.data()
     };
 
     VkResult submitRes = vkQueueSubmit2(m_computeQueue, 1, &queueSubmitInfo, getCurrentFrame().computeFence);
     if(submitRes != VK_SUCCESS){
         std::cout << "compute queue submit failed" << std::endl;
-    }        
+    }
 }
 
 void Engine::drawDearImGui(VkCommandBuffer cmd, VkImageView view){

@@ -17,13 +17,11 @@ layout(buffer_reference, std430) buffer VelocityBuffer{
 layout( push_constant ) uniform constants
 {	
 	PositionBuffer positionBufferA;
+	PositionBuffer positionBufferB;
     VelocityBuffer velocityBuffer;
-    PositionBuffer positionBufferB;
-    float time;
     float deltaTime;
     float timeScale;
 } pcs;
-
 //initial velocity of 1,1,0
 void main()
 {

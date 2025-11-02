@@ -123,7 +123,7 @@ class Engine
     VkPipelineCache particleComputePipelineCache;
     std::unordered_map<std::string, VkPipeline> particlePipelineMap; //use reflection to map to ENUM instead of string?
     std::unordered_map<std::string, glm::vec3> particleVelocityMap;
-    std::vector<ParticleSystem> particleSystems;
+    std::list<ParticleSystem> particleSystems;
 
 
     VkPipeline particleComputePipeline;//dont need
@@ -214,7 +214,7 @@ public:
     MeshData uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
     
     FrameData frameData[2];
-    uint64_t getTime() {return SDL_GetTicks() - initializationTime; }
+    uint64_t getTime() {return SDL_GetTicksNS() - initializationTime; }
 	FrameData& getCurrentFrame() { return frameData[frameNumber % 2]; };
     uint64_t frameNumber = 0;
 };

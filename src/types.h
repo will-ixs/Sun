@@ -69,7 +69,8 @@ struct ParticleComputePushConstants{
 struct ParticleSystem {
     std::string type;
     uint64_t particleCount;
-    float lifeTime;
+    double lifeTime;
+    double spawnTime;
     std::unique_ptr<Buffer> devicePositionBufferA;
     std::unique_ptr<Buffer> devicePositionBufferB;
     std::unique_ptr<Buffer> deviceVelocityBuffer;
