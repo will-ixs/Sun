@@ -51,6 +51,7 @@ struct ParticleComputePushConstants{
     VkDeviceAddress velocityBuffer;
     float deltaTime;
     float timeScale;
+    uint32_t particleCount;
 };
 
 
@@ -58,14 +59,6 @@ struct ParticleComputePushConstants{
 //CREATING: creating an instance of a particle system, has a type, use type to fill velocity buffer
 //fill position buffers at random 
 //setting its deathTime, creating its semaphore
-//todo
-//make one type to VkPipeline
-//map when particle system of that type is created use general host staging buffer
-//to memcpy to GPU initial positions
-//change draw and update to bind pipeline depending on ParticleType and 
-//use framesAlive %2 to select position buffer for draw
-//and choose which is previous buffer for compute dispatch
-//make sure to use each systems Semaphore and TLValue 
 struct ParticleSystem {
     std::string type;
     uint64_t particleCount;

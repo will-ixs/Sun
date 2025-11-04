@@ -124,9 +124,7 @@ class Engine
     std::unordered_map<std::string, VkPipeline> particlePipelineMap; //use reflection to map to ENUM instead of string?
     std::unordered_map<std::string, glm::vec3> particleVelocityMap;
     std::list<ParticleSystem> particleSystems;
-
-
-    VkPipeline particleComputePipeline;//dont need
+    std::vector<VkSemaphore> particleSystemGarbage;
 
     VkPipelineLayout meshPipelineLayout;
     VkPipeline meshPipelineOpaque;
@@ -163,9 +161,6 @@ class Engine
     VkDeviceAddress particlePosBufferAddressA;
     VkDeviceAddress particlePosBufferAddressB;
     VkDeviceAddress particleVelBufferAddress;
-
-    VkSemaphore particleTLSemaphore;
-    uint64_t particleTLValue = 0;
 
     //Scenes
     std::unordered_map<std::string, std::shared_ptr<GLTFScene>> loadedGLTFs;

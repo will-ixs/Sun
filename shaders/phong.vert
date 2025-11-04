@@ -48,7 +48,6 @@ layout (location = 0) out vec3 outColor;
 layout (location = 1) out vec2 outUV;
 layout (location = 2) out vec3 outNormal;
 layout (location = 3) out vec4 outWorldPos;
-layout (location = 4) out mat3 outTBN;
 
 void main() 
 {	
@@ -56,13 +55,9 @@ void main()
 	Material mat = sceneData.matBuffer.materials[PushConstants.materialIndex];
 	
 	vec4 position = vec4(v.position, 1.0f);
-	vec3 worldPos = vec3(PushConstants.modelMatrix * vec4(v.position, 1.0f));
-
-    vec3 T = normalize(mat3(PushConstants.modelMatrix) * v.tangent.xyz);
-    vec3 N = normalize(mat3(PushConstants.modelMatrix) * v.normal);
-    vec3 B = cross(N, T);
-
+	vec3 worldPos = vec3(PushConstants.modelMatrix * position);
 	gl_Position = sceneData.viewproj * vec4(worldPos, 1.0f);
+
 	outColor = v.color.xyz * mat.baseColor.xyz;	
 	outUV.x = v.uv_x;
 	outUV.y = v.uv_y;

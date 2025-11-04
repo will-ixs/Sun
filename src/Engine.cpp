@@ -56,13 +56,12 @@ void Engine::cleanup(){
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 
-    // vkDestroyPipelineLayout(m_device, meshPipelineLayout, nullptr);
-    // vkDestroyPipeline(m_device, meshPipelineOpaque, nullptr);
-    // vkDestroyPipeline(m_device, meshPipelineTransparent, nullptr);
+    vkDestroyPipelineLayout(m_device, meshPipelineLayout, nullptr);
+    vkDestroyPipeline(m_device, meshPipelineOpaque, nullptr);
+    vkDestroyPipeline(m_device, meshPipelineTransparent, nullptr);
     vkDestroyPipelineLayout(m_device, particleDrawPipelineLayout, nullptr);
     vkDestroyPipelineLayout(m_device, particleComputePipelineLayout, nullptr);
     vkDestroyPipeline(m_device, particleDrawPipeline, nullptr);
-    vkDestroyPipeline(m_device, particleComputePipeline, nullptr);
     
     
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
@@ -74,6 +73,7 @@ void Engine::cleanup(){
         vkDestroyCommandPool(m_device, frameData[i].computeCommandPool, nullptr);
 
         vkDestroyFence(m_device, frameData[i].renderFence, nullptr);
+        vkDestroyFence(m_device, frameData[i].computeFence, nullptr);
         vkDestroySemaphore(m_device, frameData[i].renderSemaphore, nullptr);
         vkDestroySemaphore(m_device, frameData[i].swapchainSemaphore, nullptr);
     }
@@ -113,10 +113,20 @@ void Engine::cleanup(){
     materialBuffer->destroy();
     lightBuffer->destroy();
 
+    vkDestroyPipelineCache(m_device, particleComputePipelineCache, nullptr);
+    for(auto& [type, pipeline]: particlePipelineMap){
+        vkDestroyPipeline(m_device, pipeline, nullptr);
+    }
+
+    for(auto& sema : particleSystemGarbage){
+        vkDestroySemaphore(m_device, sema, nullptr);
+    }
+
     for(auto& ps: particleSystems){
         ps.devicePositionBufferA->destroy();
         ps.devicePositionBufferB->destroy();
         ps.deviceVelocityBuffer->destroy();
+        vkDestroySemaphore(m_device, ps.particleTLSemaphore, nullptr);
     }
 
     checkerboardImage->destroy();
@@ -230,7 +240,8 @@ void Engine::initVulkan(){
 
         .descriptorBindingPartiallyBound = VK_TRUE,
         .runtimeDescriptorArray = VK_TRUE,
-        .bufferDeviceAddress = VK_TRUE
+        .timelineSemaphore = VK_TRUE,
+        .bufferDeviceAddress = VK_TRUE,
     };
 
     vkb::PhysicalDeviceSelector vkbSelector{ vkbInstance };
@@ -263,14 +274,14 @@ void Engine::initVulkan(){
 
     m_graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
     m_graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
-    // m_computeQueue = vkbDevice.get_queue(vkb::QueueType::compute).value();
-    // m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::compute).value();
-    m_computeQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
-    m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
-    // m_transferQueue = vkbDevice.get_queue(vkb::QueueType::transfer).value();
-    // m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::transfer).value();
-    m_transferQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
-    m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+    m_computeQueue = vkbDevice.get_queue(vkb::QueueType::compute).value();
+    m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::compute).value();
+    // m_computeQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+    // m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+    m_transferQueue = vkbDevice.get_queue(vkb::QueueType::transfer).value();
+    m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::transfer).value();
+    // m_transferQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+    // m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
 
     VmaAllocatorCreateInfo allocatorInfo = {
         .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
@@ -405,18 +416,6 @@ void Engine::initSynchronization(){
 	}
 
     vkCreateFence(m_device, &fenceInfo, nullptr, &m_immTransfer.fence);
-
-    VkSemaphoreTypeCreateInfo semTypeInfo = {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-        .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-        .initialValue = 0
-    };
-    VkSemaphoreCreateInfo timelineInfo = {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        .pNext = &semTypeInfo
-    };
-    vkCreateSemaphore(m_device, &timelineInfo, nullptr, &particleTLSemaphore);
-
 }
 
 void Engine::initDescriptors(){
@@ -502,26 +501,25 @@ void Engine::initDescriptors(){
 
 void Engine::initPipelines(){
     pb = std::make_unique<PipelineBuilder>();
-    //TODO: add simple shaders in this branch
-    // initMeshPipelines();
+    initMeshPipelines();
     initParticlePipelines();
     registerDefaultParticleSystems();
-    createParticleSystem("lorenz", 100000, 30.9f);
-    createParticleSystem("chua", 100000, 30.9f);
-    createParticleSystem("chen", 100000, 25.9f);
-    createParticleSystem("rossler", 100000, 30.9f);
+    createParticleSystem("lorenz", 100000, 30.0f);
+    createParticleSystem("chua", 100000, 30.0f);
+    createParticleSystem("chen", 100000, 5.0f);
+    createParticleSystem("rossler", 100000, 30.0f);
 }
 
 void Engine::initMeshPipelines(){
     VkShaderModule frag;
-	if (!loadShader(&frag, "../shaders/simple.frag.spv")) {
+	if (!loadShader(&frag, "../shaders/phong.frag.spv")) {
 		std::cout << "Error when building the triangle fragment shader module" << std::endl;
 	}
 	else {
 		std::cout << "Built the triangle fragment shader module" << std::endl;
 	}
     VkShaderModule vert;
-	if (!loadShader(&vert, "../shaders/simple.vert.spv")) {
+	if (!loadShader(&vert, "../shaders/phong.vert.spv")) {
 		std::cout << "Error when building the triangle vertex shader module" << std::endl;
 	}
 	else {
@@ -627,7 +625,7 @@ void Engine::initData(){
     
     ubo.camPos = cam->getPos();
     ubo.viewproj = glm::mat4(1.0f) * cam->getProjMatrix() * cam->getViewMatrix();
-    ubo.ambientColor = glm::vec4(0.2f, 0.2f, 0.2f, 1.0f);
+    ubo.ambientColor = glm::vec4(0.05f, 0.05f, 0.05f, 1.0f);
     ubo.sunlightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f); //w is sunlight intensity
     ubo.sunlightDirection = glm::normalize(glm::vec4(1.0f, 1.0f, 1.0f, 0.0f));
     
@@ -637,12 +635,12 @@ void Engine::initData(){
     materials.reserve(32);
     VkBufferUsageFlags materialUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     materialBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(MaterialData) * materials.capacity(), 
-    materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+        materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
     
     lightsPoint.reserve(32);
     VkBufferUsageFlags lightUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     lightBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(Light) * lightsPoint.capacity(), 
-    lightUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+        lightUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
 
     VkBufferDeviceAddressInfo bdaInfo {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
@@ -699,7 +697,8 @@ void Engine::initData(){
     vkUpdateDescriptorSets(m_device, 1, &uboWrite, 0, nullptr);
 
     meshThread = std::thread(&Engine::meshUploader, this);
-    pathQueue.push("..\\..\\resources\\cube.glb");
+    pathQueue.push("..\\..\\resources\\khrgltf_sponza_lit\\Sponza.gltf");
+    pathQueue.push("..\\..\\resources\\Duck.glb");
     pathQueue.push("QUIT");
 }
 
@@ -1054,7 +1053,7 @@ uint32_t Engine::addMaterial(const MaterialData& data, std::string name){
             .buffer = materialBuffer->buffer
         };
         materialBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
-    }    
+    }
     
     Buffer stagingBuffer = Buffer(m_device, m_allocator, materials.capacity() * sizeof(MaterialData), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
@@ -1686,10 +1685,12 @@ void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity)
         .stage = particleComputeStageInfo,
         .layout = particleComputePipelineLayout
     };
-    
-	vkCreateComputePipelines(m_device, particleComputePipelineCache, 1, &computePipelineCreateInfo, nullptr, &particleComputePipeline);
-    particlePipelineMap.insert_or_assign(name, particleComputePipeline);
+    VkPipeline computePipeline;
+	vkCreateComputePipelines(m_device, particleComputePipelineCache, 1, &computePipelineCreateInfo, nullptr, &computePipeline);
+    particlePipelineMap.insert_or_assign(name, computePipeline);
     particleVelocityMap.insert_or_assign(name, defaultVelocity);
+
+    vkDestroyShaderModule(m_device, comp, nullptr);
 }
 
 //Create an active instance of a particle system that has been registered.
@@ -1764,7 +1765,7 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
     };
     ps.positionBufferA = vkGetBufferDeviceAddress(m_device, &positionAddressInfoA);
     ps.positionBufferB = vkGetBufferDeviceAddress(m_device, &positionAddressInfoB);
-    ps.velocityBuffer = vkGetBufferDeviceAddress(m_device, &velocityAddressInfo);
+    ps.velocityBuffer  = vkGetBufferDeviceAddress(m_device, &velocityAddressInfo );
     
     if (positionStagingBuffer.allocationInfo.pMappedData == nullptr) {
         throw std::runtime_error("Host position buffer not mapped.");
@@ -1837,9 +1838,9 @@ void Engine::draw(){
     depthImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     stats.drawCallCount = 0;
-    drawParticles(cmd);
     //Draw
-    // drawMeshes(cmd);
+    drawParticles(cmd);
+    drawMeshes(cmd);
 
     resolveImage->transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 	m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -1942,7 +1943,7 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     color_attachment.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color_attachment.resolveImageView = resolveImage->view;
     color_attachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
-    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     
     VkRenderingAttachmentInfo depth_attachment = {};
@@ -1950,9 +1951,8 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     depth_attachment.pNext = nullptr;
     depth_attachment.imageView = depthImage->view;
     depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth_attachment.storeOp = 
-    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth_attachment.clearValue.depthStencil.depth = 0.0f;
     
     VkRenderingInfo rendering_info = {};
@@ -2037,7 +2037,7 @@ void Engine::drawParticles(VkCommandBuffer cmd){
     color_attachment.resolveImageView = resolveImage->view;
     color_attachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
     color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     
     VkRenderingAttachmentInfo depth_attachment = {};
     depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -2092,7 +2092,7 @@ void Engine::drawParticles(VkCommandBuffer cmd){
             pcs.positionBuffer = ps.positionBufferA;
         }
         vkCmdPushConstants(cmd, particleDrawPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticlePushConstants), &pcs);
-        vkCmdDraw(cmd, ps.particleCount, 1, 0, 0);
+        vkCmdDraw(cmd, static_cast<uint32_t>(ps.particleCount), 1, 0, 0);
         stats.drawCallCount++;
     }
 
@@ -2106,11 +2106,11 @@ void Engine::drawParticles(VkCommandBuffer cmd){
 }
 
 void Engine::updateParticles(){
+    //TODO: update is fucking with the buffer
     VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().computeFence, VK_TRUE, 1000000000);
     if (fenceResult != VK_SUCCESS) {
         throw std::runtime_error("Fence wait failed!");
     }
-    
     vkResetFences(m_device, 1, &getCurrentFrame().computeFence);
     VkCommandBuffer cmd = getCurrentFrame().computeCommandBuffer;
     vkResetCommandBuffer(cmd, 0);
@@ -2121,28 +2121,25 @@ void Engine::updateParticles(){
         .pInheritanceInfo = nullptr
     };
 
-    vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
-
-        VkPipelineBindPoint compute = VK_PIPELINE_BIND_POINT_COMPUTE;
-
-        //remove dead particleSystems
-        double currTime = static_cast<double>(getTime()) / 1e6;
-        for(auto it = particleSystems.begin(); it != particleSystems.end();){
-            //take framesAlive convert to Time;
-            if (currTime > it->spawnTime + it->lifeTime){
-                it = particleSystems.erase(it);
-            }else{
-                it++;
-            }
+    double currTime = static_cast<double>(getTime()) / 1e6;
+    //remove dead particleSystems
+    for(auto it = particleSystems.begin(); it != particleSystems.end();){
+        if (currTime > it->spawnTime + it->lifeTime){
+            particleSystemGarbage.push_back(it->particleTLSemaphore);
+            it = particleSystems.erase(it);
+        }else{
+            it++;
         }
+    }
 
-
+    vkBeginCommandBuffer(cmd, &commandBufferBeginInfo);
         ParticleComputePushConstants pcs;
         pcs.deltaTime = deltaTime;
         pcs.timeScale = 0.0005f * timeScale;
 
         for(const auto& ps : particleSystems){
-            uint32_t particleX = (static_cast<uint32_t>(ps.particleCount) + 63) / 64;
+            pcs.particleCount = static_cast<uint32_t>(ps.particleCount);
+            uint32_t particleX = (pcs.particleCount + 63) / 64;
             pcs.velocityBuffer = ps.velocityBuffer;
             if(ps.framesAlive % 2 == 0){
                 pcs.positionBufferB = ps.positionBufferB;
@@ -2152,7 +2149,8 @@ void Engine::updateParticles(){
                 pcs.positionBufferA = ps.positionBufferB;
             }
             
-            vkCmdBindPipeline(cmd, compute, particlePipelineMap.at(ps.type));
+            
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, particlePipelineMap.at(ps.type));
             vkCmdPushConstants(cmd, particleComputePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticleComputePushConstants), &pcs);
             vkCmdDispatch(cmd, particleX, 1, 1);
         }
