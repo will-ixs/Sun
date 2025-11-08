@@ -504,10 +504,13 @@ void Engine::initPipelines(){
     initMeshPipelines();
     initParticlePipelines();
     registerDefaultParticleSystems();
-    createParticleSystem("lorenz", 100000, 30.0f);
-    createParticleSystem("chua", 100000, 30.0f);
-    createParticleSystem("chen", 100000, 5.0f);
-    createParticleSystem("rossler", 100000, 30.0f);
+    registerParticleSystem("explode");
+    createParticleSystem("explode", 100000, 5.0f, glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(3.0f));
+    // createParticleSystem("lorenz", 100000, 30.0f, glm::vec3(1.0, 1.0, 1.0));
+    // createParticleSystem("chen", 100000, 5.0f);
+    // createParticleSystem("rossler", 100000, 30.0f, glm::vec3(40.0, 0.0, 0.0));
+    createParticleSystem("chua", 100000, 30.0f, glm::vec3(0.0f), glm::vec3(2.0f));
+    createParticleSystem("chua", 100000, 30.0f, glm::vec3(1.0, 0.0, 1.0), glm::vec3(2.0f));
 }
 
 void Engine::initMeshPipelines(){
@@ -626,7 +629,7 @@ void Engine::initData(){
     ubo.camPos = cam->getPos();
     ubo.viewproj = glm::mat4(1.0f) * cam->getProjMatrix() * cam->getViewMatrix();
     ubo.ambientColor = glm::vec4(0.05f, 0.05f, 0.05f, 1.0f);
-    ubo.sunlightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f); //w is sunlight intensity
+    ubo.sunlightColor = glm::vec4(1.0f, 1.0f, 1.0f, 100.0f); //w is sunlight intensity
     ubo.sunlightDirection = glm::normalize(glm::vec4(1.0f, 1.0f, 1.0f, 0.0f));
     
     memcpy(uboBuffer->allocationInfo.pMappedData, &ubo, sizeof(UniformBufferObject));
@@ -697,8 +700,11 @@ void Engine::initData(){
     vkUpdateDescriptorSets(m_device, 1, &uboWrite, 0, nullptr);
 
     meshThread = std::thread(&Engine::meshUploader, this);
-    pathQueue.push("..\\..\\resources\\khrgltf_sponza_lit\\Sponza.gltf");
+    // pathQueue.push("..\\..\\resources\\structure.glb");
     pathQueue.push("..\\..\\resources\\Duck.glb");
+    //TODO: figure out what test scene am able to publish (has ok license)
+    //make explosion
+    //billboard quad next?
     pathQueue.push("QUIT");
 }
 
@@ -892,6 +898,39 @@ void Engine::updateGUI(){
             ImGui::Text("Pitch: %f ", glm::degrees(cam->pitch));
             ImGui::SliderFloat("timescale", &timeScale, 0.05f, 2.0f);
 		}
+		ImGui::End();
+
+        if (particlePipelineMap.size() > 0){
+            std::vector<std::string_view> particleNames;
+            particleNames.reserve(particlePipelineMap.size());
+            for(const auto& [name, _]: particlePipelineMap){
+                particleNames.push_back(name);
+            }
+            
+            if (ImGui::Begin("Add Particles")) {
+                if (ImGui::BeginCombo("Particle Type", particleNames.at(particleCreation.selIdx).data())){
+                    for (int i = 0; i < particleNames.size(); i++)
+                    {
+                        if (ImGui::Selectable(particleNames.at(i).data(), particleCreation.selIdx == i)){
+                            particleCreation.selIdx = i;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::InputFloat3("Origin", &particleCreation.origin.x);
+                ImGui::InputFloat3("Origin Variance", &particleCreation.oVar.x);
+                ImGui::InputFloat3("Velocity Variance", &particleCreation.vVar.x);
+
+                ImGui::InputFloat("Lifetime", &particleCreation.lifeTime, 1.0f, 10.0f);
+                ImGui::InputInt("Num Particles", &particleCreation.numParticles, 64, 64 * 64);
+                particleCreation.numParticles = std::clamp(particleCreation.numParticles, 0, INT32_MAX); //max actually is uint32 max
+                
+                if(ImGui::Button("Spawn ParticleSystem")){
+                    createParticleSystem(particleNames.at(particleCreation.selIdx).data(), particleCreation.numParticles,
+                        particleCreation.lifeTime, particleCreation.origin, particleCreation.oVar, particleCreation.vVar);
+                }
+            }
+        }
 		ImGui::End();
         ImGui::Render();
 }
@@ -1694,7 +1733,7 @@ void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity)
 }
 
 //Create an active instance of a particle system that has been registered.
-void Engine::createParticleSystem(std::string name, uint32_t particleCount, float lifeTime){
+void Engine::createParticleSystem(std::string name, uint32_t particleCount, float lifeTime, glm::vec3 originPosition, glm::vec3 originVariance, glm::vec3 velocityVariance){
     ParticleSystem ps = {
         .type = name,
         .particleCount = particleCount,
@@ -1704,7 +1743,8 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
         //buffer addressess
         //semaphore
         .particleTLValue = 0,
-        .framesAlive = 0
+        .framesAlive = 0,
+        .originPos = originPosition
     };
 
     if (particleVelocityMap.count(name) == 0){
@@ -1716,17 +1756,30 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
         return;
     }
 
-    glm::vec3 defaultVel = particleVelocityMap.at(name);
+    glm::vec4 defaultVel = glm::vec4(particleVelocityMap.at(name), 0.0f);
 
     initialPositions.resize(particleCount);
     initialVelocities.resize(particleCount);
     std::minstd_rand rng(std::random_device{}());
     std::uniform_real_distribution<float> unitDist(-1.0f, 1.0f);
 
+    //better locality?
+    //originPos added in shader so particle calculations are done at highest precision
     for (size_t i = 0; i < particleCount; ++i) {
-        initialPositions.at(i) = glm::vec4(unitDist(rng), unitDist(rng), unitDist(rng), 0);
-        initialVelocities.at(i) = glm::vec4(defaultVel, 0);
+        glm::vec3 randVec = glm::normalize(glm::vec3(unitDist(rng), unitDist(rng), unitDist(rng)));
+        initialPositions.at(i) = glm::vec4( randVec.x * 0.5f * originVariance.x, 
+                                            randVec.y * 0.5f * originVariance.y,
+                                            randVec.z * 0.5f * originVariance.z, 0.0f);
     }
+
+    for (size_t i = 0; i < particleCount; ++i) {
+        glm::vec3 randVec = glm::normalize(glm::vec3(unitDist(rng), unitDist(rng), unitDist(rng)));
+        
+        initialVelocities.at(i) = defaultVel + glm::vec4(   randVec.x * 0.5f * velocityVariance.x, 
+                                                            randVec.y * 0.5f * velocityVariance.y,
+                                                            randVec.z * 0.5f * velocityVariance.z, 0.0f);
+    }
+    
 
     Buffer positionStagingBuffer = Buffer(m_device, m_allocator, particleCount * sizeof(glm::vec4),
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
@@ -2091,6 +2144,7 @@ void Engine::drawParticles(VkCommandBuffer cmd){
         }else{
             pcs.positionBuffer = ps.positionBufferA;
         }
+        pcs.originPos = glm::vec4(ps.originPos, 0.0f);
         vkCmdPushConstants(cmd, particleDrawPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticlePushConstants), &pcs);
         vkCmdDraw(cmd, static_cast<uint32_t>(ps.particleCount), 1, 0, 0);
         stats.drawCallCount++;
@@ -2106,7 +2160,6 @@ void Engine::drawParticles(VkCommandBuffer cmd){
 }
 
 void Engine::updateParticles(){
-    //TODO: update is fucking with the buffer
     VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().computeFence, VK_TRUE, 1000000000);
     if (fenceResult != VK_SUCCESS) {
         throw std::runtime_error("Fence wait failed!");
@@ -2142,11 +2195,11 @@ void Engine::updateParticles(){
             uint32_t particleX = (pcs.particleCount + 63) / 64;
             pcs.velocityBuffer = ps.velocityBuffer;
             if(ps.framesAlive % 2 == 0){
-                pcs.positionBufferB = ps.positionBufferB;
                 pcs.positionBufferA = ps.positionBufferA;
+                pcs.positionBufferB = ps.positionBufferB;
             }else{
-                pcs.positionBufferB = ps.positionBufferA;
                 pcs.positionBufferA = ps.positionBufferB;
+                pcs.positionBufferB = ps.positionBufferA;
             }
             
             

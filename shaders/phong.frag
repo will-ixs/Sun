@@ -53,8 +53,8 @@ layout(binding = 3) uniform  SceneData{
 	mat4 viewproj;
 	vec4 camPos;
 	vec4 ambientColor;
-	vec4 sunlightDirection; //w for sun power
-	vec4 sunlightColor;
+	vec4 sunlightDirection; 
+	vec4 sunlightColor;		//w for sun power
 	MaterialBuffer matBuffer;
 	LightBuffer lightBuffer;
     uint numLights;
@@ -105,7 +105,7 @@ void main()
 	//Sun
 	color += calculateBP(	fragPos, viewDir, norm, normalize(sceneData.sunlightDirection.xyz), 
 						 	albedo.rgb, inColor, sceneData.sunlightColor.rgb,
-							10.0f, sceneData.sunlightDirection.w);
+							10.0f, sceneData.sunlightColor.w);
 
 	for(uint i = 0; i < sceneData.numLights; i++){
         Light l = sceneData.lightBuffer.lights[i];

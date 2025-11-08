@@ -4,8 +4,6 @@
 
 layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-const float PI = 3.14159;
-
 layout(buffer_reference, std430) buffer PositionBuffer{ 
 	vec3 pos[];
 };
@@ -22,7 +20,7 @@ layout( push_constant ) uniform constants
     float timeScale;
     uint particleCount;
 } pcs;
-//initial velocity of 0.1, 0.3, -0.6
+
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
@@ -30,17 +28,7 @@ void main()
         return;
     }
     vec3 pos = pcs.positionBufferA.pos[index];
-
-    float a = 36.0f;
-    float b = 3.0f; 
-    float c = 20.0f;
-    float u = -15.15f;
-
-    float x_dot = a * (pos.y - pos.x);
-    float y_dot = pos.x - pos.x * pos.z + c * pos.y + u;
-    float z_dot = pos.x * pos.y - b * pos.z;
-    vec3 vel = vec3(x_dot, y_dot, z_dot);
-    
+    vec3 vel = pcs.velocityBuffer.vel[index];
     pos += vel * pcs.deltaTime * pcs.timeScale;
 
     pcs.positionBufferB.pos[index] = pos;

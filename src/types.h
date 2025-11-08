@@ -43,6 +43,7 @@ struct ParticlePushConstants{
     VkDeviceAddress positionBuffer;
     VkDeviceAddress velocityBuffer;
     glm::vec4 camWorldPos;
+    glm::vec4 originPos;
 };
 
 struct ParticleComputePushConstants{
@@ -73,8 +74,8 @@ struct ParticleSystem {
     VkSemaphore particleTLSemaphore;
     uint64_t particleTLValue;
     uint64_t framesAlive;
+    glm::vec3 originPos;
 };
-
 
 struct Vertex {
 	glm::vec3 position;

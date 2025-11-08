@@ -23,7 +23,9 @@
 
 ### Requirements:
 Vulkan 1.3 > SDK \
-Support of dynamic rendering, descriptor indexing, and buffer device address.
+Support of dynamic rendering, descriptor indexing, and buffer device address. \
+
+!Currently requires discrete transfer/compute queue. Most modern discrete gpus will support this.
 
 
 ### Planned for Future:

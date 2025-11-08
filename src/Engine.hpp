@@ -44,7 +44,8 @@ class Engine
 
     void registerDefaultParticleSystems();
     void registerParticleSystem(std::string type, glm::vec3 defaultVelocity = glm::vec3(0.0f));
-    void createParticleSystem(std::string type, uint32_t particleCount, float lifeTime);
+    void createParticleSystem(std::string name, uint32_t particleCount, float lifeTime, 
+        glm::vec3 originPosition = glm::vec3(0.0f), glm::vec3 originVariance = glm::vec3(0.0f), glm::vec3 velocityVariance = glm::vec3(0.0f));
     void updateScene();
     void updateGUI();
     
@@ -198,6 +199,14 @@ class Engine
     float deltaTime = 0;
     float currentTime = 0;
     float timeScale = 1.0f;
+    struct {
+        glm::vec3 origin = glm::vec3(0.0f);
+        glm::vec3 oVar = glm::vec3(1.0f);
+        glm::vec3 vVar = glm::vec3(1.0f);
+        uint32_t selIdx = 0;
+        int numParticles = 1024;
+        float lifeTime = 5.0f;
+    } particleCreation;
 
 public:
     Engine();

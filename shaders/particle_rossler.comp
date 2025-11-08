@@ -41,6 +41,6 @@ void main()
     
     pos += vel * pcs.deltaTime * pcs.timeScale;
 
-    pcs.positionBufferA.pos[index] = pos;
+    pcs.positionBufferB.pos[index] = pos;
     pcs.velocityBuffer.vel[index] = vel;
 }

@@ -2,10 +2,6 @@
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_nonuniform_qualifier : require
 
-layout (location = 0) out vec3 outColor;
-layout (location = 1) out vec3 outEye;
-layout (location = 2) out vec3 outWorldPos;
-
 layout(buffer_reference, std430) buffer PositionBuffer{ 
 	vec3 pos[];
 };
@@ -18,8 +14,13 @@ layout( push_constant ) uniform constants
 	mat4 renderMat;
 	PositionBuffer positionBuffer;
     VelocityBuffer velocityBuffer;
-	vec3 camWorldPos;
+	vec4 camWorldPos;
+	vec4 originPos;
 } pcs;
+
+layout (location = 0) out vec3 outColor;
+layout (location = 1) out vec3 outEye;
+layout (location = 2) out vec3 outWorldPos;
 
 void main() 
 {	
@@ -28,8 +29,8 @@ void main()
 	
     outColor.rgb = abs(normalize(pVel)) + 0.2;
 
-	gl_Position = pcs.renderMat * vec4(pPos, 1.0f);
+	gl_Position = pcs.renderMat * vec4(pPos + pcs.originPos.xyz, 1.0f);
 	gl_PointSize = 1.0f;
-    outEye = pcs.camWorldPos;
+    outEye = pcs.camWorldPos.xyz;
     outWorldPos = pPos;
 }
