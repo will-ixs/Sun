@@ -30,7 +30,6 @@
 #include "Image.hpp"
 #include "Buffer.hpp"
 #include "PipelineBuilder.hpp"
-#include "MeshLoader.hpp"
 
 #include <vulkan/vk_enum_string_helper.h>
 
@@ -700,10 +699,11 @@ void Engine::initData(){
     vkUpdateDescriptorSets(m_device, 1, &uboWrite, 0, nullptr);
 
     meshThread = std::thread(&Engine::meshUploader, this);
+    
+    pathQueue.push("..\\..\\resources\\khrgltf_sponza_lit\\Sponza.gltf");
     // pathQueue.push("..\\..\\resources\\structure.glb");
     pathQueue.push("..\\..\\resources\\Duck.glb");
     //TODO: figure out what test scene am able to publish (has ok license)
-    //make explosion
     //billboard quad next?
     pathQueue.push("QUIT");
 }
@@ -1766,14 +1766,16 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
     //better locality?
     //originPos added in shader so particle calculations are done at highest precision
     for (size_t i = 0; i < particleCount; ++i) {
-        glm::vec3 randVec = glm::normalize(glm::vec3(unitDist(rng), unitDist(rng), unitDist(rng)));
+        float mag = std::fabs(unitDist(rng));
+        glm::vec3 randVec = glm::normalize(glm::vec3(unitDist(rng), unitDist(rng), unitDist(rng))) * mag;
         initialPositions.at(i) = glm::vec4( randVec.x * 0.5f * originVariance.x, 
                                             randVec.y * 0.5f * originVariance.y,
                                             randVec.z * 0.5f * originVariance.z, 0.0f);
     }
 
     for (size_t i = 0; i < particleCount; ++i) {
-        glm::vec3 randVec = glm::normalize(glm::vec3(unitDist(rng), unitDist(rng), unitDist(rng)));
+        float mag = std::fabs(unitDist(rng));
+        glm::vec3 randVec = glm::normalize(glm::vec3(unitDist(rng), unitDist(rng), unitDist(rng))) * mag;
         
         initialVelocities.at(i) = defaultVel + glm::vec4(   randVec.x * 0.5f * velocityVariance.x, 
                                                             randVec.y * 0.5f * velocityVariance.y,
