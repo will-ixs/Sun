@@ -1,6 +1,7 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+#define GLM_ENABLE_EXPERIMENTAL
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
