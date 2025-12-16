@@ -128,7 +128,7 @@ private:
 
 
     //PBF
-    const uint32_t sideLength = 50;
+    const uint32_t sideLength = 40;
     const uint32_t instanceCount = sideLength * sideLength * sideLength;
     const float particleMass = 10.1f;
     const uint32_t solverIterations = 3;
