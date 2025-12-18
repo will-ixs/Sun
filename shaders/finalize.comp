@@ -89,13 +89,18 @@ void main() {
             continue;
         }
         vec3 neighborPos = loadVec3(OFFSET_CURR_POS, neighborIndex);
-        if(length(currPos - neighborPos) > PushConstants.smoothingRadius){
+        vec3 diff = currPos - neighborPos;
+        float dist = length(diff);
+        if(dist > PushConstants.smoothingRadius){
             continue;
         }
+        if(dist < 1e-6){
+            continue;
+        }
+
         vec3 neighborVel = loadVec3(OFFSET_VELOCITY, neighborIndex);
         vec3 diffVel = currVel - neighborVel;
-
-        vec3 grad = gradientKernel(length(currPos - neighborPos)) * normalize(currPos - neighborPos);
+        vec3 grad = gradientKernel(dist) * (diff / dist);
         vorticity += cross(diffVel, grad);
     }
     storeVec3(OFFSET_VORTICITY, index, vorticity);

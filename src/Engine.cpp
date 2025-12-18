@@ -78,7 +78,7 @@ void Engine::cleanup(){
     deviceGridCounters->destroy();
     neighborCount->destroy();
     neighborList->destroy();
-
+    vmaDestroyImage(m_allocator, densityMap, densityMapAllocation);
     vmaDestroyAllocator(m_allocator);
 
     m_swapchain->destroySwapchain();
@@ -187,11 +187,16 @@ void Engine::initVulkan(){
         .bufferDeviceAddress = VK_TRUE
     };
 
+    VkPhysicalDeviceFeatures features10{
+        .samplerAnisotropy = VK_TRUE
+    };
+
     vkb::PhysicalDeviceSelector vkbSelector{ vkbInstance };
 	vkb::PhysicalDevice physicalDevice = vkbSelector
 		.set_minimum_version(1, 3)
 		.set_required_features_13(features13)
 		.set_required_features_12(features12)
+        .set_required_features(features10)
 		.set_surface(m_surface)
 		.select()
 		.value();
@@ -287,6 +292,7 @@ void Engine::initDrawResources(){
     drawImgUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     drawImgUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     drawImgUsage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    drawImgUsage |= VK_IMAGE_USAGE_SAMPLED_BIT;
     VkImageUsageFlags depthImgUsage = {};
     depthImgUsage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
@@ -429,6 +435,21 @@ void Engine::initMeshPipeline(){
 		std::cout << "Built the triangle vertex shader module" << std::endl;
 	}
 
+    
+    VkShaderModule fullscreeVert;
+	if (!loadShader(&fullscreeVert, "../shaders/fullscreen.vert.spv")) {
+        std::cout << "Error when building the fullscreen vert shader module" << std::endl;
+	}
+	else {
+        std::cout << "Built the fullscreen vert shader module" << std::endl;
+	}
+    VkShaderModule fullscreenFrag;
+    if (!loadShader(&fullscreenFrag, "../shaders/fullscreen.frag.spv")) {
+		std::cout << "Error when building the fullscreen frag shader module" << std::endl;
+	}
+	else {
+		std::cout << "Built the fullscreen frag shader module" << std::endl;
+	}
     VkPushConstantRange pc = {
         .stageFlags = VK_SHADER_STAGE_ALL,
         .offset = 0,
@@ -445,7 +466,8 @@ void Engine::initMeshPipeline(){
         .pPushConstantRanges = &pc
     };
 	vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &meshPipelineLayout);
-
+    pc.size = sizeof(RMPushConstants);
+    vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &rmPipelineLayout);
     
 	pb->clear();
 	pb->pipeline_layout = meshPipelineLayout;
@@ -461,8 +483,16 @@ void Engine::initMeshPipeline(){
 	pb->setDepthAttachmentFormat(depthImage->format);
 	meshPipeline = pb->buildPipeline(m_device);
 
+    pb->pipeline_layout = rmPipelineLayout;
+    pb->setShaders(fullscreeVert, fullscreenFrag);
+    pb->disableDepthtest();
+    pb->setCullingMode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+    fullscreenPipeline = pb->buildPipeline(m_device);
+
 	vkDestroyShaderModule(m_device, vert, nullptr);
 	vkDestroyShaderModule(m_device, frag, nullptr);
+	vkDestroyShaderModule(m_device, fullscreeVert, nullptr);
+	vkDestroyShaderModule(m_device, fullscreenFrag, nullptr);
 }
 
 void Engine::initComputePipelines(){
@@ -489,6 +519,7 @@ void Engine::initComputePipelines(){
     
     VkShaderModule buildGrid;
     VkShaderModule neighbor;
+    VkShaderModule densities;
     
     VkShaderModule lambdas;
     VkShaderModule deltas;
@@ -528,6 +559,12 @@ void Engine::initComputePipelines(){
     else {
         std::cout << "Built the find_neighbors shader module" << std::endl;
     }
+    if (!loadShader(&densities, "../shaders/calculate_densities.comp.spv")) {
+        std::cout << "Error when building the calculate_densities compute shader module" << std::endl;
+    }
+    else {
+        std::cout << "Built the calculate_densities shader module" << std::endl;
+    }
 
     if (!loadShader(&lambdas, "../shaders/lambdas.comp.spv")) {
 		std::cout << "Error when building the lambdas compute shader module" << std::endl;
@@ -547,6 +584,7 @@ void Engine::initComputePipelines(){
 	else {
 		std::cout << "Built the collisions shader module" << std::endl;
 	}
+
     if (!loadShader(&vorticity, "../shaders/finalize.comp.spv")) {
 		std::cout << "Error when building the finalize compute shader module" << std::endl;
 	}
@@ -608,6 +646,13 @@ void Engine::initComputePipelines(){
         .pNext = nullptr,
         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
         .module = neighbor,
+        .pName = "main"
+    };
+    VkPipelineShaderStageCreateInfo densityStageInfo{
+        .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = densities,
         .pName = "main"
     };
 
@@ -673,6 +718,8 @@ void Engine::initComputePipelines(){
 	vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeDeltas);
     computePipelineCreateInfo.stage = neighborStageInfo;
     vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeNeighbors);
+    computePipelineCreateInfo.stage = densityStageInfo;
+    vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeDensities);
     computePipelineCreateInfo.stage = lambdaStageInfo;
     vkCreateComputePipelines(m_device, computeCache, 1, &computePipelineCreateInfo, nullptr, &computeLambdas);
     computePipelineCreateInfo.stage = vortStageInfo;
@@ -690,6 +737,7 @@ void Engine::initComputePipelines(){
     vkDestroyShaderModule(m_device, predictPosition, nullptr);
     vkDestroyShaderModule(m_device, buildGrid, nullptr);
     vkDestroyShaderModule(m_device, neighbor, nullptr);
+    vkDestroyShaderModule(m_device, densities, nullptr);
     vkDestroyShaderModule(m_device, lambdas, nullptr);
     vkDestroyShaderModule(m_device, deltas, nullptr);
     vkDestroyShaderModule(m_device, collisions, nullptr);
@@ -796,13 +844,99 @@ void Engine::initData(){
     
     updatePositionBuffer();
 
+    VkExtent3D densityExtent {
+        .width = 256,
+        .height = 256,
+        .depth = 256
+    };
+    VkImageCreateInfo imageInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .imageType = VK_IMAGE_TYPE_3D,
+        .format = VK_FORMAT_R16_SFLOAT,
+        .extent = densityExtent,
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+    };
+
+    VmaAllocationCreateInfo allocInfo{
+        .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO
+    };
+
+    if (vmaCreateImage(m_allocator, &imageInfo, &allocInfo, &densityMap, &densityMapAllocation, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create image");
+    }
+
+    VkImageSubresourceRange imageRange = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1
+    };
+
+    VkImageViewCreateInfo viewInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = nullptr,
+        .image = densityMap,
+        .viewType = VK_IMAGE_VIEW_TYPE_3D,
+        .format = VK_FORMAT_R16_SFLOAT,
+        .subresourceRange = imageRange
+    };
+    
+    if (vkCreateImageView(m_device, &viewInfo, nullptr, &densityMapView) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create image view");
+    }
+
+    VkSamplerCreateInfo samplerInfo{
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .pNext = nullptr,
+        .magFilter = VK_FILTER_LINEAR,
+        .minFilter = VK_FILTER_LINEAR,
+        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .mipLodBias = 0.0f,
+        .anisotropyEnable = VK_TRUE,
+        .maxAnisotropy = 1.0f,
+        .compareEnable = VK_FALSE,
+        .compareOp = VK_COMPARE_OP_ALWAYS,
+        .minLod = 0.0f,
+        .maxLod = 0.0f,
+        .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+        .unnormalizedCoordinates = VK_FALSE
+    };
+    
+    vkCreateSampler(m_device, &samplerInfo, nullptr, &trilinearSampler);
+
+
+    VkDescriptorImageInfo densityInfo {
+        .imageView = densityMapView,
+        .imageLayout = VK_IMAGE_LAYOUT_GENERAL
+    };
+
+    VkDescriptorImageInfo densitySamplerInfo {
+        .sampler = trilinearSampler,
+        .imageView = densityMapView,
+        .imageLayout = VK_IMAGE_LAYOUT_GENERAL
+    };
+
     VkDescriptorBufferInfo bufferInfo = {
         .buffer = devicePositionBuffer->buffer,
         .offset = 0,
         .range = instanceCount * sizeof(ParticleData)
     };
 
-    VkWriteDescriptorSet writeDescriptorSet = {
+
+    VkWriteDescriptorSet writeDescriptorSet1 = {
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .pNext = nullptr, 
         .dstSet = m_descriptorSet,
@@ -814,11 +948,36 @@ void Engine::initData(){
         .pBufferInfo = &bufferInfo,
         .pTexelBufferView = nullptr
     };
+    VkWriteDescriptorSet writeDescriptorSet2 = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr, 
+        .dstSet = m_descriptorSet,
+        .dstBinding = IMAGE_BINDING,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .pImageInfo = &densityInfo,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr
+    };
+    VkWriteDescriptorSet writeDescriptorSet3 = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr, 
+        .dstSet = m_descriptorSet,
+        .dstBinding = SAMPLER_BINDING,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &densitySamplerInfo,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr
+    };
 
-    vkUpdateDescriptorSets(m_device, 1, &writeDescriptorSet, 0, nullptr);
-    
+    VkWriteDescriptorSet writes[3] = {writeDescriptorSet1, writeDescriptorSet2, writeDescriptorSet3};
+
+    vkUpdateDescriptorSets(m_device, 3, writes, 0, nullptr);
+        
     MeshLoader::loadGltfMeshes(this, testMeshes, "..\\..\\resources\\sphere.glb");
-
     
     cam = std::make_unique<Camera>((float)drawExtent.width, (float)drawExtent.height);
 }
@@ -1076,11 +1235,13 @@ void Engine::resetParticlePositions(){
     particleCurrPosition.clear();
     particlePrevPosition.clear();
     particleVelocity.clear();
-    glm::vec3 step = (maxBoundingPos - minBoundingPos) / float(sideLength - 1);
+    glm::vec3 boundingSize = maxBoundingPos - minBoundingPos;
+    glm::vec3 step = boundingSize / float(sideLength - 1);
+    step /= 2.0;
     for (uint32_t x = 0; x < sideLength; ++x) {
         for (uint32_t y = 0; y < sideLength; ++y) {
             for (uint32_t z = 0; z < sideLength; ++z) {
-                glm::vec3 pos = minBoundingPos + glm::vec3(x, y, z) * step;
+                glm::vec3 pos = (minBoundingPos + (0.25f * boundingSize) ) + glm::vec3(x, y, z) * step;
                 particleCurrPosition.push_back(pos);
                 particlePrevPosition.push_back(pos);
                 particleVelocity.push_back(glm::vec3(0.0f));
@@ -1369,7 +1530,7 @@ void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
         cpcs.gridCells = gridCellsBufferAddress;
         cpcs.neighborCount = neighborCountBufferAddress;
         cpcs.neighborList = neighborListBufferAddress;
-        cpcs.timestep = 1.0f/60.0f;
+        cpcs.timestep = 1.0f/32.0f;
         cpcs.smoothingRadius = smoothingRadius;
         cpcs.restDensity = restDensity;
         cpcs.particleMass = particleMass;
@@ -1408,6 +1569,15 @@ void Engine::gpuUpdateParticlePositions(VkCommandBuffer cmd){
         vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
         vkCmdDispatch(cmd, particleX, 1, 1);
         //Solving constraints depends on neighbor list
+        vkCmdBindPipeline(cmd, compute, computeDensities);
+        
+        vkCmdBindDescriptorSets(cmd, compute, computePipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+        vkCmdPushConstants(cmd, computePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushConstants), &cpcs);
+        uint32_t groupCountX = (256 + 8 - 1) / 8;  // = 32
+        uint32_t groupCountY = (256 + 8 - 1) / 8;
+        uint32_t groupCountZ = (256 + 8 - 1) / 8; 
+
+        vkCmdDispatch(cmd, groupCountX, groupCountY, groupCountZ);
         vkCmdPipelineBarrier2(cmd, &dependencyInfo);
         
 
@@ -1480,12 +1650,37 @@ void Engine::draw(){
 
  	drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     depthImage->transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    
+    if(!densityLayoutIsGeneral){
+        prepImmediateTransfer();
+    
+        VkImageMemoryBarrier barrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,  // Same layout
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL, 
+            .image = densityMap,
+        };
+    
+        vkCmdPipelineBarrier(
+            m_immTransfer.buffer,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,  // srcStage
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,  // dstStage
+            0, 0, nullptr, 0, nullptr, 1, &barrier
+        );
+    
+        submitImmediateTransfer();
+
+        densityLayoutIsGeneral = true;
+    }
 
     // if(frameNumber < 100){
         gpuUpdateParticlePositions(cmd);
     // }
     //Draw
-    drawMeshes(cmd);
+    // drawMeshes(cmd);
+    drawWater(cmd);
 
     drawImage->transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 	m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -1625,6 +1820,66 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
 	vkCmdBindIndexBuffer(cmd, testMeshes.at(0).data.indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT32);
     
 	vkCmdDrawIndexed(cmd, testMeshes.at(0).surfaces.at(0).count, instanceCount, testMeshes.at(0).surfaces.at(0).startIndex, 0, 0);
+
+    vkCmdEndRendering(cmd);
+}
+
+void Engine::drawWater(VkCommandBuffer cmd){
+    VkRenderingAttachmentInfo color_attachment = {};
+    color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    color_attachment.pNext = nullptr;
+    color_attachment.imageView = drawImage->view;
+    color_attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    
+    VkRenderingAttachmentInfo depth_attachment = {};
+    depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    depth_attachment.pNext = nullptr;
+    depth_attachment.imageView = depthImage->view;
+    depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_attachment.clearValue.depthStencil.depth = 0.0f;
+    
+    VkRenderingInfo rendering_info = {};
+    rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    rendering_info.pNext = nullptr;
+    rendering_info.renderArea = VkRect2D{ VkOffset2D { 0, 0 }, drawExtent };
+    rendering_info.layerCount = 1;
+    rendering_info.colorAttachmentCount = 1;
+    rendering_info.pColorAttachments = &color_attachment;
+    rendering_info.pDepthAttachment = &depth_attachment;
+    rendering_info.pStencilAttachment = nullptr;
+    
+    vkCmdBeginRendering(cmd, &rendering_info);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fullscreenPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rmPipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+    
+    VkViewport viewport = {};
+    viewport.x = 0;
+    viewport.y = 0;
+    viewport.width = (float)drawExtent.width;
+    viewport.height = (float)drawExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    
+    VkRect2D scissor = {};
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent.width = drawExtent.width;
+    scissor.extent.height = drawExtent.height;
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    
+    RMPushConstants pcs;
+    pcs.inverseMat = glm::inverse(cam->getRenderMatrix());
+    pcs.minBoundingPos = minBoundingPos;
+    pcs.maxBoundingPos = maxBoundingPos;
+    pcs.camWorldPos = cam->getPosition();
+    
+	vkCmdPushConstants(cmd, rmPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(RMPushConstants), &pcs);
+	vkCmdDraw(cmd, 3, 1, 0, 0);
 
     vkCmdEndRendering(cmd);
 }

@@ -103,11 +103,16 @@ void main() {
             continue;
         }
         vec3 neighborPos = loadVec3(OFFSET_CURR_POS, neighborIndex);
-        if(length(currPos - neighborPos) > PushConstants.smoothingRadius){
+        vec3 diff = currPos - neighborPos;
+        float dist = length(diff);
+        if(dist < 1e-6){
+            continue;
+        }
+        if(dist > PushConstants.smoothingRadius){
             continue;
         }
         
-        vec3 grad = (gradientKernel(length(currPos - neighborPos)) * normalize(currPos - neighborPos)) / PushConstants.restDensity;
+        vec3 grad = (gradientKernel(dist) * normalize(currPos - neighborPos)) / PushConstants.restDensity;
 
         gradSum += dot(grad, grad);
         grad_i += grad;
@@ -116,5 +121,9 @@ void main() {
     gradSum += dot(grad_i, grad_i);
 
     float lambda = -Ci / (gradSum + 0.0001);
+    if(lambda > 1e6 || lambda < -1e6 || isnan(lambda) || isinf(lambda)){
+        lambda = 0.0;
+    }
+
     storeFloat(OFFSET_LAMBDAS, index, lambda);
 }

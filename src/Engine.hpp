@@ -48,7 +48,7 @@ private:
     void draw();
     void drawMeshes(VkCommandBuffer cmd);
     void drawDearImGui(VkCommandBuffer cmd, VkImageView view);
-
+    void drawWater(VkCommandBuffer cmd);
     //Optons
     bool m_bUseValidation = false;
     bool m_bUseDebugMessenger = false;
@@ -84,6 +84,8 @@ private:
     //Pipelines
     VkPipelineLayout meshPipelineLayout;
     VkPipeline meshPipeline;
+    VkPipelineLayout rmPipelineLayout;
+    VkPipeline fullscreenPipeline;
 
     VkFence computeFence;
     VkPipelineLayout computePipelineLayout;
@@ -94,6 +96,7 @@ private:
 
     VkPipeline computeGrid;
     VkPipeline computeNeighbors;
+    VkPipeline computeDensities;
 
     VkPipeline computeLambdas;
     VkPipeline computeDeltas;
@@ -114,6 +117,7 @@ private:
     //Draw Resources
     std::unique_ptr<Image> drawImage;
     std::unique_ptr<Image> depthImage;
+    VkSampler drawSampler;
     VkExtent2D drawExtent; 
 
     std::vector<MeshAsset> testMeshes;
@@ -128,7 +132,7 @@ private:
 
 
     //PBF
-    const uint32_t sideLength = 40;
+    const uint32_t sideLength = 50;
     const uint32_t instanceCount = sideLength * sideLength * sideLength;
     const float particleMass = 10.1f;
     const uint32_t solverIterations = 3;
@@ -137,6 +141,11 @@ private:
     const uint32_t PRIME2 = 73856093;
     const uint32_t PRIME3 = 83492791;
 
+    VkSampler trilinearSampler;
+    VkImage densityMap;
+    VkImageView densityMapView;
+    bool densityLayoutIsGeneral = false;
+    VmaAllocation densityMapAllocation;
     // std::vector<std::vector<int>> grid;
     size_t hashGridCoord(int x, int y, int z);
     void buildGrid();

@@ -74,7 +74,9 @@ float gradientKernel(float r){
 float scorr(float dist){
     float top = densityKernel(dist);
     float bot = densityKernel(0.1);
-    return -0.01 * pow((top / bot), 4);
+    float ratio = top/bot;
+    ratio = clamp(ratio, -1e6, 1e6);
+    return -0.01 * pow(ratio, 4);
 }
 
 void main() {
@@ -95,15 +97,22 @@ void main() {
             continue;
         }
         vec3 neighborPos = loadVec3(OFFSET_CURR_POS, neighborIndex);
-        float dist = length(currPos - neighborPos);
+        vec3 diff = currPos - neighborPos;
+        float dist = length(diff);
         if(dist > PushConstants.smoothingRadius){
             continue;
         }
+        if(dist < 1e-6){
+            continue;
+        }
         float neighborLambda = loadFloat(OFFSET_LAMBDAS, neighborIndex);
-        vec3 grad = gradientKernel(dist) * normalize(currPos - neighborPos);
+        vec3 grad = gradientKernel(dist) * (diff / dist);
 
         delta += ((currLambda + neighborLambda + scorr(dist)) * grad);
     }
     delta /= PushConstants.restDensity;
+    if(length(delta) > 10.0){
+        delta = normalize(delta) * 10.0; 
+    }
     storeVec3(OFFSET_DELTA, index, delta);
 }

@@ -34,6 +34,12 @@ struct PushConstants{
     VkDeviceAddress particleBuffer;
     glm::vec3 camWorldPos;
 };
+struct alignas(16) RMPushConstants{
+    glm::mat4 inverseMat;
+    alignas(16) glm::vec3 camWorldPos; 
+    alignas(16) glm::vec3 maxBoundingPos;
+    alignas(16) glm::vec3 minBoundingPos;
+};
 
 struct alignas(16) ComputePushConstants{
     VkDeviceAddress particleBuffer;
