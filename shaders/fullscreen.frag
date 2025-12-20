@@ -14,6 +14,9 @@ layout( push_constant ) uniform constants
 	vec3 maxBoundingPos;
 } PushConstants;
 
+
+const float EPSILON = 0.001;
+
 vec3 intersect(vec3 boxMin, vec3 boxMax, vec3 rayOrigin, vec3 rayDir) {
     vec3 invDir = 1.0 / rayDir;
     vec3 t0 = (boxMin - rayOrigin) * invDir;
@@ -33,6 +36,19 @@ vec3 intersect(vec3 boxMin, vec3 boxMax, vec3 rayOrigin, vec3 rayDir) {
     return rayOrigin + rayDir * tNear;
 }
 
+bool inBounds(vec3 samplePos){
+    if( samplePos.x < -EPSILON || samplePos.x > 1.0 + EPSILON ||
+        samplePos.y < -EPSILON || samplePos.y > 1.0 + EPSILON ||
+        samplePos.z < -EPSILON || samplePos.z > 1.0 + EPSILON) {
+            return false;
+    }
+    return true;
+}
+
+float sampleDensity(vec3 samplePos){
+        samplePos.y = 1.0 - samplePos.y;
+        return texture(samplers[0], samplePos).r; //r16f
+}
 
 void main() {
     vec4 clipSpace = vec4(texCoord * 2.0 - 1.0, 0.0, 1.0);
@@ -46,7 +62,6 @@ void main() {
     vec3 volumeSize = maxPos - minPos;
     float maxDim = max(max(volumeSize.x, volumeSize.y), volumeSize.z);
     const float marchStep = 1.0 / 1.250;
-    const float EPSILON = 0.001;
     const float densityScale = 12.0;
     const vec3 scalingFactors = vec3(0.1, 0.2, 0.6);
 
@@ -57,25 +72,16 @@ void main() {
     int i = 0;
     for (i = 0; i < 256; i++) {
         vec3 samplePos = (rayPos - minPos) / (maxPos - minPos);
-        if( samplePos.x < -EPSILON || samplePos.x > 1.0 + EPSILON ||
-            samplePos.y < -EPSILON || samplePos.y > 1.0 + EPSILON ||
-            samplePos.z < -EPSILON || samplePos.z > 1.0 + EPSILON) {
-            break;
-        }
-        samplePos.y = 1.0 - samplePos.y;
-        float sampledDensity = texture(samplers[0], samplePos).r; //r16f
+        if(!inBounds(samplePos)) break;
+        float sampledDensity = sampleDensity(samplePos);
         accumulated += sampledDensity;
 
         float densityOccludingFluid = 0.0;
         float sampleStepSize = (samplePos.y + 0.1 )/ 16.0; 
         for(int j = 0; j < 16; j++) {
             vec3 aboveSamplePos = samplePos + (sampleStepSize * j);
-            if( aboveSamplePos.x < -EPSILON || aboveSamplePos.x > 1.0 + EPSILON ||
-                aboveSamplePos.y < -EPSILON || aboveSamplePos.y > 1.0 + EPSILON ||
-                aboveSamplePos.z < -EPSILON || aboveSamplePos.z > 1.0 + EPSILON) {
-                break;
-            }
-            densityOccludingFluid += texture(samplers[0], aboveSamplePos).r;
+            if(!inBounds(aboveSamplePos)) break;
+            densityOccludingFluid += sampleDensity(aboveSamplePos);
         }
 
         vec3 inScatteredLight = exp(-densityOccludingFluid * scalingFactors) * sampledDensity * scalingFactors;
