@@ -191,6 +191,11 @@ class Engine
     std::shared_ptr<Image> checkerboardImage;
     VkSampler defaultLinearSampler;
     VkSampler defaultNearestSampler;
+
+    VkImage videoTexture;
+    VkImageView videoTextureView;
+    VmaAllocation videoTextureAlloc;
+    VkImageLayout videoTextureLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     
     bool cleanedUp;
     bool mouseCaptured = true;

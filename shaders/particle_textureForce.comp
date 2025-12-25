@@ -1,0 +1,121 @@
+#version 450
+
+#extension GL_EXT_buffer_reference : require
+
+layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430) buffer PositionBuffer{ 
+	vec3 pos[];
+};
+layout(buffer_reference, std430) buffer VelocityBuffer{ 
+	vec3 vel[];
+};
+
+layout(set = 0, binding = 1) uniform usampler3D samplers[];
+
+layout( push_constant ) uniform constants
+{	
+	PositionBuffer positionBufferA;
+	PositionBuffer positionBufferB;
+    VelocityBuffer velocityBuffer;
+    float deltaTime;
+    float timeScale;
+    float time;
+    uint particleCount;
+} pcs;
+
+const vec3 maxPos = vec3(3.3, 2.5, 0.1);
+const vec3 minPos = vec3(-3.3, -2.5, -0.1);
+const float horizontalScale = 1.0;
+const float verticalScale = 1.0;
+
+vec3 worldToTex(vec3 world){
+    return (world - minPos) / (maxPos - minPos);
+}
+
+vec3 texToWorld(vec3 tex){
+    return minPos + (tex * (maxPos - minPos));
+}
+
+vec2 hash21(float p)
+{
+	vec3 p3 = fract(vec3(p) * vec3(.1031, .1030, .0973));
+	p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.xx+p3.yz)*p3.zy);
+
+}
+
+void main()
+{    
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= pcs.particleCount){
+        return;
+    }
+    vec3 pos = pcs.positionBufferA.pos[index];
+    vec3 vel = pcs.velocityBuffer.vel[index];
+    vec3 texPos = worldToTex(pos);  //get sample position
+    float frame = mod(30.0 * pcs.time, 6573.0); //24 fps * seconds = frame, loop in case lifetime is > time of vid
+    texPos.z = frame / 6573.0;
+    texPos.y = 1.0 - texPos.y;
+    uvec2 asdf = texture(samplers[32], texPos).xy;
+    
+    float hF = float(asdf.x) - 128.0;
+    float vF = float(asdf.y) - 128.0;
+    // float hF = 0.0;
+    // float vF = 0.0;
+    // if(asdf.x > 128){ // go right
+    //     hF = asdf.x - 128;
+    // }else if(asdf.x < 128){ // go left
+    //     hF = -1.0;
+    // }
+
+    // if(asdf.y > 128){ // go down
+    //     vF = 1.0;
+    // }else if(asdf.y < 128){//go up
+    //     vF = -1.0;
+    // }
+
+    vel.x += hF * horizontalScale;
+    vel.y += vF * horizontalScale;
+    vel.z = 0.0;
+    pos += vel * pcs.deltaTime * pcs.timeScale;
+
+//////////////// Wrapping ///////////////
+    // if(pos.x > maxPos.x && vel.x > 0.0){
+    //     pos.x = minPos.x;
+    // }else if(pos.x < minPos.x && vel.x < 0.0 ){
+    //     pos.x = maxPos.x;
+    // }
+
+    // if(pos.y > maxPos.y && vel.y > 0.0){
+    //     pos.y = minPos.y;
+    // }else if(pos.y < minPos.y && vel.y < 0.0 ){
+    //     pos.y = maxPos.y;
+    // }
+
+    // if ((hF + vF) == 0.0){
+    //     vel *= 0.95;
+    // }
+/////////////////////////////////////////
+
+
+
+/////////Rand//////////////////////////
+    if( (any(greaterThan(pos, maxPos)) || any(lessThan(pos, minPos)))){
+        vec2 xy = hash21(float(index) + pcs.time);
+        vec3 ws = texToWorld(vec3(xy, 0.0));
+        pos.x = ws.x;
+        pos.y = ws.y;
+        vel = vel * 0.25;
+    }
+    if((hF + vF == 0.0)){
+        vel*=0.99 - abs(pos.z) * 9.8;
+    }
+    vel *= (0.99 - abs(pos.z));
+///////////////////////////////////////
+    
+    // pos = clamp(pos, minPos, maxPos);
+
+    pcs.positionBufferB.pos[index] = pos;
+    pcs.velocityBuffer.vel[index] = vel;
+}

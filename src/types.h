@@ -53,6 +53,7 @@ struct ParticleComputePushConstants{
     VkDeviceAddress velocityBuffer;
     float deltaTime;
     float timeScale;
+    float time;
     uint32_t particleCount;
 };
 
@@ -108,6 +109,7 @@ struct EngineStats {
     float meshDrawTime;
     int triCount;
     int drawCallCount;
+    double uptime;
 };
 
 struct alignas(16) MaterialData{

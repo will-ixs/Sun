@@ -31,8 +31,6 @@
 #include "Buffer.hpp"
 #include "PipelineBuilder.hpp"
 
-#include <vulkan/vk_enum_string_helper.h>
-
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
                                                           
 Engine::Engine()
@@ -49,7 +47,7 @@ Engine::~Engine()
 void Engine::cleanup(){
     vkDeviceWaitIdle(m_device);
 
-    meshThread.join();
+    // meshThread.join();
     
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplSDL3_Shutdown();
@@ -83,6 +81,7 @@ void Engine::cleanup(){
     drawImage->destroy();
     resolveImage->destroy();
     depthImage->destroy();
+    vmaDestroyImage(m_allocator, videoTexture, videoTextureAlloc);
 
     for(MeshAsset& mesh : testMeshes){
         mesh.data.indexBuffer->destroy();
@@ -267,7 +266,7 @@ void Engine::initVulkan(){
     if(images < IMAGE_COUNT){
         IMAGE_COUNT = images;
     }
-
+    
     m_physicalDevice = physicalDevice.physical_device;
     m_device = vkbDevice.device;
 
@@ -504,12 +503,13 @@ void Engine::initPipelines(){
     initParticlePipelines();
     registerDefaultParticleSystems();
     registerParticleSystem("explode");
+    registerParticleSystem("textureForce");
     createParticleSystem("explode", 100000, 5.0f, glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(3.0f));
     // createParticleSystem("lorenz", 100000, 30.0f, glm::vec3(1.0, 1.0, 1.0));
     // createParticleSystem("chen", 100000, 5.0f);
     // createParticleSystem("rossler", 100000, 30.0f, glm::vec3(40.0, 0.0, 0.0));
-    createParticleSystem("chua", 100000, 30.0f, glm::vec3(0.0f), glm::vec3(2.0f));
-    createParticleSystem("chua", 100000, 30.0f, glm::vec3(1.0, 0.0, 1.0), glm::vec3(2.0f));
+    createParticleSystem("chua", 100000, 5.0f, glm::vec3(0.0f), glm::vec3(2.0f));
+    createParticleSystem("chua", 100000, 5.0f, glm::vec3(1.0, 0.0, 1.0), glm::vec3(2.0f));
 }
 
 void Engine::initMeshPipelines(){
@@ -671,7 +671,10 @@ void Engine::initData(){
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .pNext = nullptr,
         .magFilter = VK_FILTER_NEAREST,
-        .minFilter = VK_FILTER_NEAREST
+        .minFilter = VK_FILTER_NEAREST,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
     };
 	vkCreateSampler(m_device, &sampler, nullptr, &defaultNearestSampler);
 	sampler.magFilter = VK_FILTER_LINEAR;
@@ -698,14 +701,180 @@ void Engine::initData(){
     };
     vkUpdateDescriptorSets(m_device, 1, &uboWrite, 0, nullptr);
 
-    meshThread = std::thread(&Engine::meshUploader, this);
+
+    //Create Image 192x144x7778
+    //  createBuffer of size for one frame (192x144)
+    //foreach frame
+    //  stbiLoadImage
+    //  copy image data into buffer
+    //  vkCopyBufferToImage at its desired frame
+    VkExtent3D vidExtent {
+        .width = 192,
+        .height = 144,
+        .depth = 6573
+    };
+    VkImageCreateInfo imageInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .imageType = VK_IMAGE_TYPE_3D,
+        .format = VK_FORMAT_B8G8R8A8_UINT,
+        .extent = vidExtent,
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+    };
+
+    VmaAllocationCreateInfo allocInfo{
+        .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO
+    };
+
+    if (vmaCreateImage(m_allocator, &imageInfo, &allocInfo, &videoTexture, &videoTextureAlloc, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create image");
+    }
+
+    VkImageSubresourceRange imageRange = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1
+    };
+
+    VkImageViewCreateInfo viewInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = nullptr,
+        .image = videoTexture,
+        .viewType = VK_IMAGE_VIEW_TYPE_3D,
+        .format = VK_FORMAT_B8G8R8A8_UINT,
+        .subresourceRange = imageRange
+    };
     
-    pathQueue.push("..\\..\\resources\\khrgltf_sponza_lit\\Sponza.gltf");
+    if (vkCreateImageView(m_device, &viewInfo, nullptr, &videoTextureView) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create image view");
+    }
+
+    size_t dataSize = vidExtent.depth * vidExtent.width * vidExtent.height * sizeof(unsigned char) * 4;
+    
+    VkBufferUsageFlags stagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    Buffer stagingBuffer = Buffer(m_device, m_allocator, dataSize, stagingUsage, 
+        VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+        
+    int width, height, nrChannels;
+    std::vector<unsigned char> imageDat2;
+    imageDat2.reserve(dataSize);
+        
+    std::filesystem::path directorypath = "..\\..\\resources\\ba2";
+    if (!std::filesystem::exists(directorypath)){ throw std::runtime_error("couldnt open files");}
+    for (const auto& entry : std::filesystem::directory_iterator(directorypath)) {
+        std::string name = entry.path().string();
+        unsigned char* imageData = stbi_load(name.c_str(), &width, &height, &nrChannels, 3);
+        for(int i = 0; i < 192 * 144; i++){
+            int rgb_idx = i * 3;
+            imageDat2.push_back(imageData[rgb_idx + 2]);
+            imageDat2.push_back(imageData[rgb_idx + 1]);
+            imageDat2.push_back(imageData[rgb_idx]);
+            imageDat2.push_back(255);
+        }
+    }
+    memcpy(stagingBuffer.allocationInfo.pMappedData, imageDat2.data(), dataSize);
+    
+    prepImmediateTransfer();
+     VkImageMemoryBarrier barrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_NONE,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,  // Same layout
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
+            .image = videoTexture,
+            .subresourceRange = imageRange
+        };
+        vkCmdPipelineBarrier(
+            m_immTransfer.buffer,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,  // srcStage
+            VK_PIPELINE_STAGE_TRANSFER_BIT,  // dstStage
+            0, 0, nullptr, 0, nullptr, 1, &barrier
+        );
+    submitImmediateTransfer();
+
+    
+    std::vector<VkBufferImageCopy> copyRegions(vidExtent.depth);
+    for(uint32_t i = 0; i < vidExtent.depth; i++){
+        copyRegions.at(i) = VkBufferImageCopy{
+            .bufferOffset = vidExtent.width * vidExtent.height * 4 * i,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = VkImageSubresourceLayers{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            },
+            .imageOffset = {0, 0, static_cast<int32_t>(i)},
+            .imageExtent = {vidExtent.width, vidExtent.height, 1}
+        };
+    }
+    prepImmediateTransfer();
+
+    vkCmdCopyBufferToImage(m_immTransfer.buffer, stagingBuffer.buffer, videoTexture, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vidExtent.depth, copyRegions.data());
+    
+	submitImmediateTransfer();
+
+    prepImmediateTransfer();
+     VkImageMemoryBarrier barrier2 = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  // Same layout
+            .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+            .image = videoTexture,
+            .subresourceRange = imageRange
+        };
+        vkCmdPipelineBarrier(
+            m_immTransfer.buffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,  // srcStage
+            VK_PIPELINE_STAGE_TRANSFER_BIT,  // dstStage
+            0, 0, nullptr, 0, nullptr, 1, &barrier2
+        );
+    submitImmediateTransfer();
+
+    stagingBuffer.destroy();
+
+    VkDescriptorImageInfo samplerInfo = {
+        .sampler = defaultNearestSampler,
+        .imageView = videoTextureView,
+        .imageLayout = videoTextureLayout,
+    };
+    VkWriteDescriptorSet samplerWrite {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr, 
+        .dstSet = m_descriptorSet,
+        .dstBinding = SAMPLER_BINDING,
+        .dstArrayElement = 32,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &samplerInfo,
+        .pBufferInfo = nullptr,
+        .pTexelBufferView = nullptr
+    };
+    vkUpdateDescriptorSets(m_device, 1, &samplerWrite, 0, nullptr);
+
+    
+    
+
+    // meshThread = std::thread(&Engine::meshUploader, this);
+    
+    // pathQueue.push("..\\..\\resources\\khrgltf_sponza_lit\\Sponza.gltf");
     // pathQueue.push("..\\..\\resources\\structure.glb");
-    pathQueue.push("..\\..\\resources\\Duck.glb");
+    // pathQueue.push("..\\..\\resources\\Duck.glb");
     //TODO: figure out what test scene am able to publish (has ok license)
     //billboard quad next?
-    pathQueue.push("QUIT");
+    // pathQueue.push("QUIT");
 }
 
 void Engine::initDearImGui(){
@@ -896,6 +1065,7 @@ void Engine::updateGUI(){
             ImGui::Text("Draws: %i", stats.drawCallCount);
             ImGui::Text("Yaw: %f ", glm::degrees(cam->yaw));
             ImGui::Text("Pitch: %f ", glm::degrees(cam->pitch));
+            ImGui::Text("Uptime: %f ", stats.uptime);
             ImGui::SliderFloat("timescale", &timeScale, 0.05f, 2.0f);
 		}
 		ImGui::End();
@@ -1737,8 +1907,8 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
     ParticleSystem ps = {
         .type = name,
         .particleCount = particleCount,
-        .lifeTime = lifeTime * 1000.0f,
-        .spawnTime =  static_cast<double>(getTime()) / 1e6,
+        .lifeTime = lifeTime,
+        .spawnTime =  static_cast<double>(getTime()) / 1e9,
         //device buffers
         //buffer addressess
         //semaphore
@@ -2162,6 +2332,7 @@ void Engine::drawParticles(VkCommandBuffer cmd){
 }
 
 void Engine::updateParticles(){
+    vkDeviceWaitIdle(m_device);
     VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().computeFence, VK_TRUE, 1000000000);
     if (fenceResult != VK_SUCCESS) {
         throw std::runtime_error("Fence wait failed!");
@@ -2176,7 +2347,7 @@ void Engine::updateParticles(){
         .pInheritanceInfo = nullptr
     };
 
-    double currTime = static_cast<double>(getTime()) / 1e6;
+    double currTime = static_cast<double>(getTime()) / 1e9;
     //remove dead particleSystems
     for(auto it = particleSystems.begin(); it != particleSystems.end();){
         if (currTime > it->spawnTime + it->lifeTime){
@@ -2191,11 +2362,11 @@ void Engine::updateParticles(){
         ParticleComputePushConstants pcs;
         pcs.deltaTime = deltaTime;
         pcs.timeScale = 0.0005f * timeScale;
-
         for(const auto& ps : particleSystems){
             pcs.particleCount = static_cast<uint32_t>(ps.particleCount);
             uint32_t particleX = (pcs.particleCount + 63) / 64;
             pcs.velocityBuffer = ps.velocityBuffer;
+            pcs.time = static_cast<float>(stats.uptime - ps.spawnTime);
             if(ps.framesAlive % 2 == 0){
                 pcs.positionBufferA = ps.positionBufferA;
                 pcs.positionBufferB = ps.positionBufferB;
@@ -2207,6 +2378,7 @@ void Engine::updateParticles(){
             
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, particlePipelineMap.at(ps.type));
             vkCmdPushConstants(cmd, particleComputePipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(ParticleComputePushConstants), &pcs);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, particleComputePipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
             vkCmdDispatch(cmd, particleX, 1, 1);
         }
 
@@ -2355,6 +2527,7 @@ void Engine::run(){
         auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         deltaTime = elapsed.count() / 1000.0f;
         currentTime += deltaTime;
+        stats.uptime = static_cast<double>(getTime()) / 1e9;
         if(frameNumber% 144){
             stats.frameTime = deltaTime;
         }

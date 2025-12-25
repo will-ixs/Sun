@@ -32,5 +32,6 @@ void main()
 	gl_Position = pcs.renderMat * vec4(pPos + pcs.originPos.xyz, 1.0f);
 	gl_PointSize = 1.0f;
     outEye = pcs.camWorldPos.xyz;
+	outColor.rgb = vec3(1.0);
     outWorldPos = pPos;
 }
