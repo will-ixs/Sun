@@ -1,35 +1,4 @@
-struct Vertex {
-	float3 position;
-	float uv_x;
-	float3 normal;
-	float uv_y;
-	float4 color;
-	float4 tangent;
-};
-struct Material {
-    float4 baseColor;
-    float metallicFactor;
-    float roughnessFactor;
-    uint baseColorIndex;
-    uint metallicRoughnessIndex;
-    uint normalIndex; 
-    uint _pad0; // 4 bytes
-    uint _pad1; // 4 bytes
-    uint _pad2; // 4 bytes
-};
-struct Light {
-    uint type;
-    uint32_t _pad0, _pad1, _pad2;
-
-    float4 pos;
-    float4 dir;
-    float4 col;
-    
-    float intensity;
-    float range;
-    float innerConeAngle;
-    float outerConeAngle;
-};
+import "types";
 
 struct PushConstants {
     float4x4 model;
@@ -92,9 +61,8 @@ float4 main(VSOutput input) : SV_Target0 {
     Material m = ubo.materialBuffer[pcs.materialIndex];
     float4 albedo = float4(input.color, 1.0);
 
-    uint index = NonUniformResourceIndex(m.baseColorIndex);
     if (m.baseColorIndex != 0xFFFFFFFF) {
-        albedo *= textures[index].Sample(input.uv);
+        albedo *= textures[m.baseColorIndex].Sample(input.uv);
     }
     if (albedo.w < 0.5) {
         discard;

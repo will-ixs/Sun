@@ -540,7 +540,7 @@ void Engine::initMeshPipelines(){
 
     VkShaderModule phong;
 
-    Slang::ComPtr<slang::IModule> slangModule{ slangSession->loadModuleFromSource("phong", "../../shaders/phong.slang", nullptr, nullptr) };
+    Slang::ComPtr<slang::IModule> slangModule{ slangSession->loadModuleFromSource("pbr", "../../shaders/phong.slang", nullptr, nullptr) };
 	Slang::ComPtr<ISlangBlob> spirv;
 	slangModule->getTargetCode(0, spirv.writeRef());
 	VkShaderModuleCreateInfo shaderModuleCI{ .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = spirv->getBufferSize(), .pCode = (uint32_t*)spirv->getBufferPointer() };
