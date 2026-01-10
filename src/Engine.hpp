@@ -4,6 +4,9 @@
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 
+#include <slang/slang.h>
+#include <slang/slang-com-ptr.h>
+
 #include <vector>
 #include <array>
 #include <filesystem>
@@ -65,7 +68,7 @@ class Engine
     
     
     void meshUploader();
-    std::queue<std::filesystem::path> pathQueue;
+    std::queue<std::filesystem::path> meshPathQueue;
     std::thread meshThread;
     
     //Pipelines
@@ -81,12 +84,15 @@ class Engine
     //Compute
     void updateParticles();
 
+    //Slang
+    Slang::ComPtr<slang::IGlobalSession> slangGlobalSession;
+    slang::SessionDesc slangDefaultSessionDesc;
     //Optons
-    bool m_bUseValidation = false;
-    bool m_bUseDebugMessenger = false;
+    bool useValidation = false;
+    bool useDebugMessenger = false;
     
     //Window info
-    struct SDL_Window* m_pWindow {nullptr};
+    struct SDL_Window* pWindow {nullptr};
     uint32_t windowWidth;
     uint32_t windowHeight;
 

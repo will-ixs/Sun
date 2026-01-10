@@ -1,151 +1,78 @@
-cmake_minimum_required(VERSION 3.6)
-project(VulkanProject LANGUAGES C CXX)
+cmake_minimum_required(VERSION 3.10)
+project(Sun LANGUAGES C CXX)
 
 # Set C++ Standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Vulkan
-find_package(Vulkan REQUIRED COMPONENTS glslc)
-find_program(glslc_executable NAMES glslc HINTS Vulkan::glslc)
 
+find_package(Vulkan REQUIRED)
 # set the output directory for built objects.
 # This makes sure that the dynamic library goes into the build directory automatically.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
 
-#compile shaders cmake: https://stackoverflow.com/a/68457439
-#==============================================================================
-# COMPILE SHADERS
-#
-
-set(SHADER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
-set(SHADER_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
-
-file(GLOB SHADERS
-  ${SHADER_SOURCE_DIR}/*.vert
-  ${SHADER_SOURCE_DIR}/*.frag
-  ${SHADER_SOURCE_DIR}/*.comp
-  ${SHADER_SOURCE_DIR}/*.geom
-  ${SHADER_SOURCE_DIR}/*.tesc
-  ${SHADER_SOURCE_DIR}/*.tese
-  ${SHADER_SOURCE_DIR}/*.mesh
-  ${SHADER_SOURCE_DIR}/*.task
-  ${SHADER_SOURCE_DIR}/*.rgen
-  ${SHADER_SOURCE_DIR}/*.rchit
-  ${SHADER_SOURCE_DIR}/*.rmiss)
-
-add_custom_command(
-  COMMAND
-    ${CMAKE_COMMAND} -E make_directory ${SHADER_BINARY_DIR}
-  OUTPUT ${SHADER_BINARY_DIR}
-  COMMENT "Creating ${SHADER_BINARY_DIR}"
-)
-
-foreach(source IN LISTS SHADERS)
-  get_filename_component(FILENAME ${source} NAME)
-  add_custom_command(
-    COMMAND
-      ${glslc_executable}
-      #      -MD -MF ${SHADER_BINARY_DIR}/${FILENAME}.d
-      -o ${SHADER_BINARY_DIR}/${FILENAME}.spv
-      ${source}
-    OUTPUT ${SHADER_BINARY_DIR}/${FILENAME}.spv
-    DEPENDS ${source} ${SHADER_BINARY_DIR}
-    COMMENT "Compiling ${FILENAME}"
-  )
-  list(APPEND SPV_SHADERS ${SHADER_BINARY_DIR}/${FILENAME}.spv)
-endforeach()
-
-add_custom_target(shaders ALL DEPENDS ${SPV_SHADERS})
-
 # FetchContent to pull dependencies
 include(FetchContent)
-
-# SDL3
+#SDL3
 FetchContent_Declare(
     SDL3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG release-3.2.4
 )
-FetchContent_MakeAvailable(SDL3)
-
-# GLM
+#GLM
 FetchContent_Declare(
 	glm
 	GIT_REPOSITORY	https://github.com/g-truc/glm.git
 	GIT_TAG 	1.0.2
 )
-
-FetchContent_MakeAvailable(glm)
-
-# vk-bootstrap
+#VKB
 FetchContent_Declare(
     vk_bootstrap
     GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
     GIT_TAG        v1.4.307
-)
-FetchContent_MakeAvailable(vk_bootstrap)
-
-# ImGui
+)# ImGui
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG v1.91.8
 )
-FetchContent_MakeAvailable(imgui)
-
-# set(VMA_DYNAMIC_VULKAN_FUNCTIONS ON)
-# set(VMA_STATIC_VULKAN_FUNCTIONS OFF)
-# set(VMA_BUILD_DOCS OFF CACHE BOOL "Disable Doxygen documentation")
+#VMA - set(VMA_DYNAMIC_VULKAN_FUNCTIONS ON)
 FetchContent_Declare(
     VulkanMemoryAllocator
     GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
     GIT_TAG v3.0.1
 )
-FetchContent_MakeAvailable(VulkanMemoryAllocator)
-
+#fastgltf
 FetchContent_Declare(
     fastgltf
     GIT_REPOSITORY https://github.com/spnda/fastgltf.git
     GIT_TAG v0.8.0
 )
-FetchContent_MakeAvailable(fastgltf)
 
+FetchContent_MakeAvailable(SDL3 glm vk_bootstrap imgui VulkanMemoryAllocator fastgltf)
 
-set(KTX_FEATURE_STATIC_LIBRARY ON)
-set(KTX_FEATURE_LOADTEST_APPS OFF)
-set(KTX_FEATURE_TOOLS OFF)
-set(KTX_FEATURE_DOC OFF)
-set(KTX_FEATURE_TESTS OFF)
-FetchContent_Declare(
-    libktx
-    GIT_REPOSITORY https://github.com/KhronosGroup/KTX-Software.git
-    GIT_TAG        v4.4.0
-)
-FetchContent_MakeAvailable(libktx)
-
-
-add_library(imgui STATIC
+set(IMGUI_SOURCES
+    ${Vulkan_INCLUDE_DIRS}
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/imgui_demo.cpp  # Optional
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
 )
+add_library(imgui STATIC ${IMGUI_SOURCES})
 
-target_include_directories(imgui PRIVATE 
+target_include_directories(imgui PUBLIC
     ${Vulkan_INCLUDE_DIRS}
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
 )
-target_link_libraries(imgui PUBLIC SDL3::SDL3 Vulkan::Vulkan)
+find_library(Slang_LIBRARY NAMES slang 
+    HINTS "${Vulkan_INCLUDE_DIRS}/../lib"  # SDK include is usually one level up from lib
+    REQUIRED)
 
-
-# Create Executable
-add_executable(VulkanProject 
+add_executable(Sun 
     src/main.cpp
     src/Engine.cpp
     src/Swapchain.cpp
@@ -153,38 +80,35 @@ add_executable(VulkanProject
     src/Camera.cpp
     src/Buffer.cpp
     src/PipelineBuilder.cpp
-    # src/MeshLoader.cpp
 )
 
 # Include Directories
-target_include_directories(VulkanProject PRIVATE 
-    ${Vulkan_INCLUDE_DIRS}
+target_include_directories(Sun PRIVATE 
+    ${Vulkan_INCLUDE_DIRS}/slang
     ${SDL3_INCLUDE_DIRS}
     ${glm_SOURCE_DIR}
     ${vkbootstrap_SOURCE_DIR}
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
     ${VulkanMemoryAllocator_SOURCE_DIR}/include
-    ${libktx_SOURCE_DIR}/include
 )
 
 # Link Libraries
-target_link_libraries(VulkanProject PRIVATE 
+target_link_libraries(Sun PRIVATE 
     Vulkan::Vulkan
     SDL3::SDL3
     glm::glm
     vk-bootstrap::vk-bootstrap
     fastgltf::fastgltf
     imgui
-    ktx
+    ${Slang_LIBRARY}
 )
-
-#message(STATUS "Vulkan Include Directory: ${Vulkan_INCLUDE_DIRS}")
-#message(STATUS "Vulkan Library:  ${Vulkan_LIBRARY}")
 
 # Enable compiler warnings
 if (MSVC)
-    target_compile_options(VulkanProject PRIVATE /W4)
+    target_compile_options(Sun PRIVATE /W4)
 else()
-    target_compile_options(VulkanProject PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(Sun PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+message(STATUS "Vulkan include: ${Vulkan_INCLUDE_DIRS}")
+message(STATUS "Slang library: ${Slang_LIBRARY}")

@@ -196,17 +196,17 @@ struct UniformBufferObject{
     uint32_t numLights;
 };
 
-struct alignas(16) Light{
-    alignas(16) uint32_t type;
-    alignas(16) glm::vec3 lightPos;   
-    alignas(16) glm::vec3 lightDir;
-    alignas(16) glm::vec3 lightColor; //VVVVV fastgltf descriptions VVVVVVV
-    /** Point and spot lights use candela (lm/sr) while directional use lux (lm/m^2) */
-    float intensity;
-    /** Range for point and spot lights. If not present, range is infinite. */
-    float range;
-	/** The inner and outer cone angles only apply to spot lights */
-    float innerConeAngle;
+struct alignas(16) Light {
+    uint32_t type;          
+    uint32_t _pad0[3];      
+    
+    glm::vec4 lightPos;     
+    glm::vec4 lightDir;                 
+    glm::vec4 lightColor;   
+    
+    float intensity;        
+    float range;            
+    float innerConeAngle;   
     float outerConeAngle;
 };
 

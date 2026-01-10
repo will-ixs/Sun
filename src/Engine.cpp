@@ -31,8 +31,6 @@
 #include "Buffer.hpp"
 #include "PipelineBuilder.hpp"
 
-#include <vulkan/vk_enum_string_helper.h>
-
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
                                                           
 Engine::Engine()
@@ -142,7 +140,7 @@ void Engine::cleanup(){
 		
 	vkb::destroy_debug_utils_messenger(m_instance, m_debugMessenger);
 	vkDestroyInstance(m_instance, nullptr);
-	SDL_DestroyWindow(m_pWindow);
+	SDL_DestroyWindow(pWindow);
 
     cleanedUp = true;
 }
@@ -183,9 +181,9 @@ void Engine::initSDL3(){
     SdlWindowFlags |= SDL_WINDOW_RESIZABLE;
     
     SDL_Init(SdlInitFlags);
-    m_pWindow = SDL_CreateWindow("Sun", 1600, 900, SdlWindowFlags);
+    pWindow = SDL_CreateWindow("Sun", 1600, 900, SdlWindowFlags);
     mouseCaptured = false;
-    SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
+    SDL_SetWindowRelativeMouseMode(pWindow, mouseCaptured);
     SDL_CaptureMouse(mouseCaptured);
 }
 
@@ -194,10 +192,10 @@ void Engine::initVulkan(){
 
     vkb::SystemInfo sysInfo = vkb::SystemInfo::get_system_info().value();
 
-    if (sysInfo.validation_layers_available && m_bUseValidation) {
+    if (sysInfo.validation_layers_available && useValidation) {
         instanceBuilder.request_validation_layers();
     }
-    if (sysInfo.debug_utils_available && m_bUseDebugMessenger) {
+    if (sysInfo.debug_utils_available && useDebugMessenger) {
         instanceBuilder.use_default_debug_messenger();
     }
     instanceBuilder.require_api_version(1, 3, 0);
@@ -209,12 +207,12 @@ void Engine::initVulkan(){
     vkb::Instance vkbInstance = instanceBuilderRet.value();
     m_instance = vkbInstance.instance;
 
-    if(vkbInstance.debug_messenger && m_bUseDebugMessenger){
+    if(vkbInstance.debug_messenger && useDebugMessenger){
         m_debugMessenger = vkbInstance.debug_messenger;
     }       
 
     
-    if(!SDL_Vulkan_CreateSurface(m_pWindow, m_instance, nullptr, &m_surface)){
+    if(!SDL_Vulkan_CreateSurface(pWindow, m_instance, nullptr, &m_surface)){
        const char* err = SDL_GetError();
        std::cout << err << std::endl;
     }
@@ -500,8 +498,31 @@ void Engine::initDescriptors(){
 
 void Engine::initPipelines(){
     pb = std::make_unique<PipelineBuilder>();
+    slang::createGlobalSession(slangGlobalSession.writeRef());
+    auto slangTargets{std::to_array<slang::TargetDesc>({
+        {
+            .format{SLANG_SPIRV},
+            .profile{slangGlobalSession->findProfile("spirv_1_4")}
+        }
+    })};
+    auto slangOptions{std::to_array<slang::CompilerOptionEntry>({
+        {
+            slang::CompilerOptionName::EmitSpirvDirectly,
+            {slang::CompilerOptionValueKind::Int, 1}
+        }
+    })};
+    slangDefaultSessionDesc = {
+        .targets{slangTargets.data()},
+        .targetCount{SlangInt(slangTargets.size())},
+        .defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR,
+        .compilerOptionEntries{slangOptions.data()},
+        .compilerOptionEntryCount{uint32_t(slangOptions.size())}
+    };
+
     initMeshPipelines();
     initParticlePipelines();
+
+    
     registerDefaultParticleSystems();
     registerParticleSystem("explode");
     createParticleSystem("explode", 100000, 5.0f, glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(3.0f));
@@ -513,20 +534,18 @@ void Engine::initPipelines(){
 }
 
 void Engine::initMeshPipelines(){
-    VkShaderModule frag;
-	if (!loadShader(&frag, "../shaders/phong.frag.spv")) {
-		std::cout << "Error when building the triangle fragment shader module" << std::endl;
-	}
-	else {
-		std::cout << "Built the triangle fragment shader module" << std::endl;
-	}
-    VkShaderModule vert;
-	if (!loadShader(&vert, "../shaders/phong.vert.spv")) {
-		std::cout << "Error when building the triangle vertex shader module" << std::endl;
-	}
-	else {
-		std::cout << "Built the triangle vertex shader module" << std::endl;
-	}
+    
+    Slang::ComPtr<slang::ISession> slangSession;
+    slangGlobalSession->createSession(slangDefaultSessionDesc, slangSession.writeRef());
+
+    VkShaderModule phong;
+
+    Slang::ComPtr<slang::IModule> slangModule{ slangSession->loadModuleFromSource("phong", "../../shaders/phong.slang", nullptr, nullptr) };
+	Slang::ComPtr<ISlangBlob> spirv;
+	slangModule->getTargetCode(0, spirv.writeRef());
+	VkShaderModuleCreateInfo shaderModuleCI{ .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = spirv->getBufferSize(), .pCode = (uint32_t*)spirv->getBufferPointer() };
+
+	vkCreateShaderModule(m_device, &shaderModuleCI, nullptr, &phong);
 
     VkPushConstantRange pc = {
         .stageFlags = VK_SHADER_STAGE_ALL,
@@ -548,7 +567,7 @@ void Engine::initMeshPipelines(){
     
 	pb->clear();
 	pb->pipeline_layout = meshPipelineLayout;
-	pb->setShaders(vert, frag);
+	pb->setShaders(phong, phong);
 	pb->setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	pb->setPolygonMode(VK_POLYGON_MODE_FILL);
 	pb->setCullingMode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE);
@@ -564,8 +583,7 @@ void Engine::initMeshPipelines(){
     pb->enableBlending(VK_BLEND_FACTOR_ONE);
     meshPipelineTransparent = pb->buildPipeline(m_device);
 
-	vkDestroyShaderModule(m_device, vert, nullptr);
-	vkDestroyShaderModule(m_device, frag, nullptr);
+	vkDestroyShaderModule(m_device, phong, nullptr);
 }
 
 void Engine::initParticlePipelines(){
@@ -700,12 +718,12 @@ void Engine::initData(){
 
     meshThread = std::thread(&Engine::meshUploader, this);
     
-    pathQueue.push("..\\..\\resources\\khrgltf_sponza_lit\\Sponza.gltf");
+    meshPathQueue.push("..\\..\\resources\\khrgltf_sponza_lit\\Sponza.gltf");
     // pathQueue.push("..\\..\\resources\\structure.glb");
-    pathQueue.push("..\\..\\resources\\Duck.glb");
+    meshPathQueue.push("..\\..\\resources\\Duck.glb");
     //TODO: figure out what test scene am able to publish (has ok license)
     //billboard quad next?
-    pathQueue.push("QUIT");
+    meshPathQueue.push("QUIT");
 }
 
 void Engine::initDearImGui(){
@@ -723,7 +741,7 @@ void Engine::initDearImGui(){
     vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_ImguiPool);
 
     ImGui::CreateContext();
-    ImGui_ImplSDL3_InitForVulkan(m_pWindow);
+    ImGui_ImplSDL3_InitForVulkan(pWindow);
     ImGui_ImplVulkan_InitInfo imguiVulkanInfo = {
         .Instance = m_instance,
         .PhysicalDevice = m_physicalDevice,
@@ -1598,9 +1616,9 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
             if(lights.at(node->lightIndex).type == 1 || lights.at(node->lightIndex).type == 2){ //direcitonal or spot
                 glm::vec4 localForward(0.0f, 0.0f, -1.0f, 0.0f);
                 glm::vec4 worldDir = node->worldTransform * localForward;
-                lights.at(node->lightIndex).lightDir = glm::normalize(glm::vec3(worldDir));
+                lights.at(node->lightIndex).lightDir = glm::normalize(worldDir);
             }else{
-                lights.at(node->lightIndex).lightDir = glm::vec3(0.0f);
+                lights.at(node->lightIndex).lightDir = glm::vec4(0.0f);
             }
         }
     }
@@ -1615,13 +1633,13 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
 
 void Engine::meshUploader(){
     while (true) {
-		if (pathQueue.empty()) {
+		if (meshPathQueue.empty()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			continue;
 		}
 		
-		std::filesystem::path res = pathQueue.front();
-		pathQueue.pop();
+		std::filesystem::path res = meshPathQueue.front();
+		meshPathQueue.pop();
 		if (res.generic_string() == "QUIT") {
 			break;
 		}
@@ -1867,7 +1885,7 @@ void Engine::draw(){
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
         int32_t w = 0;
         int32_t h = 0;
-		SDL_GetWindowSizeInPixels(m_pWindow, &w, &h);
+		SDL_GetWindowSizeInPixels(pWindow, &w, &h);
         m_swapchain->resizeSwapchain(w, h);
 		return;
 	}
@@ -1979,7 +1997,7 @@ void Engine::draw(){
 	if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_SUBOPTIMAL_KHR) {
         int32_t w = 0;
         int32_t h = 0;
-		SDL_GetWindowSizeInPixels(m_pWindow, &w, &h);
+		SDL_GetWindowSizeInPixels(pWindow, &w, &h);
         m_swapchain->resizeSwapchain(w, h);
 	}
 	else if (presentRes != VK_SUCCESS) {
@@ -2314,7 +2332,7 @@ void Engine::run(){
                 case SDLK_Q:
                     mouseCaptured = !mouseCaptured;
                     SDL_CaptureMouse(mouseCaptured);
-                    SDL_SetWindowRelativeMouseMode(m_pWindow, mouseCaptured);
+                    SDL_SetWindowRelativeMouseMode(pWindow, mouseCaptured);
                     break;
                 default:
                     break;
@@ -2355,7 +2373,7 @@ void Engine::run(){
         auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         deltaTime = elapsed.count() / 1000.0f;
         currentTime += deltaTime;
-        if(frameNumber% 144){
+        if(frameNumber% 1440){
             stats.frameTime = deltaTime;
         }
     }
