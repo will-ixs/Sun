@@ -524,29 +524,17 @@ void Engine::initPipelines(){
 
     
     registerDefaultParticleSystems();
-    registerParticleSystem("explode");
     createParticleSystem("explode", 100000, 5.0f, glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(3.0f));
-    // createParticleSystem("lorenz", 100000, 30.0f, glm::vec3(1.0, 1.0, 1.0));
-    // createParticleSystem("chen", 100000, 5.0f);
-    // createParticleSystem("rossler", 100000, 30.0f, glm::vec3(40.0, 0.0, 0.0));
-    createParticleSystem("chua", 100000, 30.0f, glm::vec3(0.0f), glm::vec3(2.0f));
-    createParticleSystem("chua", 100000, 30.0f, glm::vec3(1.0, 0.0, 1.0), glm::vec3(2.0f));
+    // createParticleSystem("chua", 100000, 30.0f, glm::vec3(0.0f), glm::vec3(2.0f));
 }
 
 void Engine::initMeshPipelines(){
     
-    Slang::ComPtr<slang::ISession> slangSession;
-    slangGlobalSession->createSession(slangDefaultSessionDesc, slangSession.writeRef());
-
     VkShaderModule phong;
-
-    Slang::ComPtr<slang::IModule> slangModule{ slangSession->loadModuleFromSource("pbr", "../../shaders/phong.slang", nullptr, nullptr) };
-	Slang::ComPtr<ISlangBlob> spirv;
-	slangModule->getTargetCode(0, spirv.writeRef());
-	VkShaderModuleCreateInfo shaderModuleCI{ .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = spirv->getBufferSize(), .pCode = (uint32_t*)spirv->getBufferPointer() };
-
-	vkCreateShaderModule(m_device, &shaderModuleCI, nullptr, &phong);
-
+    if(loadShader(&phong, "../../shaders/rendering/phong.slang")){
+        std::cout << "Successfully built phong shader." << std::endl;
+    }
+    
     VkPushConstantRange pc = {
         .stageFlags = VK_SHADER_STAGE_ALL,
         .offset = 0,
@@ -587,19 +575,9 @@ void Engine::initMeshPipelines(){
 }
 
 void Engine::initParticlePipelines(){
-    VkShaderModule frag;
-	if (!loadShader(&frag, "../shaders/particle.frag.spv")) {
-		std::cout << "Error when building the particle fragment shader module" << std::endl;
-	}
-	else {
-		std::cout << "Built the particle fragment shader module" << std::endl;
-	}
-    VkShaderModule vert;
-	if (!loadShader(&vert, "../shaders/particle.vert.spv")) {
-		std::cout << "Error when building the particle vertex shader module" << std::endl;
-	}
-	else {
-		std::cout << "Built the particle vertex shader module" << std::endl;
+    VkShaderModule particle;
+	if (loadShader(&particle, "../../shaders/rendering/particle.slang")) {
+		std::cout << "Successfully built particle shader." << std::endl;
 	}
 
     VkPushConstantRange pcDraw = {
@@ -621,7 +599,7 @@ void Engine::initParticlePipelines(){
     
 	pb->clear();
 	pb->pipeline_layout = particleDrawPipelineLayout;
-	pb->setShaders(vert, frag);
+	pb->setShaders(particle, particle);
 	pb->setTopology(VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
 	pb->setPolygonMode(VK_POLYGON_MODE_FILL);
 	pb->setCullingMode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
@@ -632,8 +610,7 @@ void Engine::initParticlePipelines(){
 	pb->setDepthAttachmentFormat(depthImage->format);
 	particleDrawPipeline = pb->buildPipeline(m_device);
 
-	vkDestroyShaderModule(m_device, vert, nullptr);
-	vkDestroyShaderModule(m_device, frag, nullptr);
+	vkDestroyShaderModule(m_device, particle, nullptr);
 }
 
 void Engine::initData(){
@@ -766,28 +743,27 @@ void Engine::initDearImGui(){
 }
 
 //Utility
-bool Engine::loadShader(VkShaderModule* outShader, std::string filePath) {
+bool Engine::loadShader(VkShaderModule* outShader, std::string filePath) {    
     std::ifstream file(filePath, std::ios::ate | std::ios::binary);
 	if (!file.is_open()) {
         std::cout << "Shaderfile not found" << std::endl;
         return false;
 	}
-	size_t fileSize = (size_t)file.tellg();
-	std::vector<uint32_t> buffer(fileSize / sizeof(uint32_t));
-    
-	file.seekg(0);
-	file.read((char*)buffer.data(), fileSize);
-	file.close();
+    Slang::ComPtr<slang::ISession> slangSession;
+    slangGlobalSession->createSession(slangDefaultSessionDesc, slangSession.writeRef());
+    Slang::ComPtr<slang::IModule> slangModule{ slangSession->loadModuleFromSource(filePath.c_str(), filePath.c_str(), nullptr, nullptr) };
+	Slang::ComPtr<ISlangBlob> spirv;
+	slangModule->getTargetCode(0, spirv.writeRef());
 
-	VkShaderModuleCreateInfo shader = {
-        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+	VkShaderModuleCreateInfo shader = { 
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, 
         .pNext = nullptr,
-        .codeSize = buffer.size() * sizeof(uint32_t),
-        .pCode = buffer.data()
+        .codeSize = spirv->getBufferSize(), 
+        .pCode = (uint32_t*)spirv->getBufferPointer() 
     };
 
 	if(vkCreateShaderModule(m_device, &shader, nullptr, outShader) != VK_SUCCESS){
-        std::cout << "Failed to create shader module" << std::endl;
+        std::cout << "Failed to create shader module at " << filePath << std::endl;
         return false;
     }
     return true;
@@ -1689,18 +1665,16 @@ void Engine::registerDefaultParticleSystems(){
     registerParticleSystem("chen", glm::vec3(0.1, 0.3, -0.6));
     registerParticleSystem("chua", glm::vec3(1.0, 1.0, 0.0));
     registerParticleSystem("rossler", glm::vec3(0.0, 0.0, 0.0));
+    registerParticleSystem("explode");
 }
 
 //Register a particle system. Save its default values to created and rendered at any time.
 void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity){
     VkShaderModule comp;
-    std::string shaderFileName = "../shaders/particle_" + name + ".comp.spv";
-	if (!loadShader(&comp, shaderFileName)) {
-		std::cout << "Error when building the " << shaderFileName << " shader module." << std::endl;
-	}
-	else {
-		std::cout << "Succesfully built " << shaderFileName << " shader module." << std::endl;
-	}
+    std::string shaderFileName = "../../shaders/particle_compute/particle_" + name + ".slang";
+	if (loadShader(&comp, shaderFileName)) {
+        std::cout << "Succesfully built " << shaderFileName << " shader module." << std::endl;
+    }
 
     if (particlePipelineMap.empty()){
         VkPushConstantRange pcComp = {
