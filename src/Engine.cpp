@@ -45,7 +45,7 @@ Engine::~Engine()
 }
 
 void Engine::cleanup(){
-    vkDeviceWaitIdle(m_device);
+    vkDeviceWaitIdle(device);
 
     meshThread.join();
     
@@ -53,30 +53,30 @@ void Engine::cleanup(){
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 
-    vkDestroyPipelineLayout(m_device, meshPipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, meshPipelineOpaque, nullptr);
-    vkDestroyPipeline(m_device, meshPipelineTransparent, nullptr);
-    vkDestroyPipelineLayout(m_device, particleDrawPipelineLayout, nullptr);
-    vkDestroyPipelineLayout(m_device, particleComputePipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, particleDrawPipeline, nullptr);
+    vkDestroyPipelineLayout(device, meshPipelineLayout, nullptr);
+    vkDestroyPipeline(device, meshPipelineOpaque, nullptr);
+    vkDestroyPipeline(device, meshPipelineTransparent, nullptr);
+    vkDestroyPipelineLayout(device, particleDrawPipelineLayout, nullptr);
+    vkDestroyPipelineLayout(device, particleComputePipelineLayout, nullptr);
+    vkDestroyPipeline(device, particleDrawPipeline, nullptr);
     
     
-    vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-    vkDestroyDescriptorPool(m_device, m_ImguiPool, nullptr);
-	vkDestroyDescriptorSetLayout(m_device, m_descriptorLayout, nullptr);
+    vkDestroyDescriptorPool(device, descriptorPoolDefault, nullptr);
+    vkDestroyDescriptorPool(device, descriptorPoolImgui, nullptr);
+	vkDestroyDescriptorSetLayout(device, descriptorLayoutBindless, nullptr);
     
     for (int i = 0; i < 2; i++) {
-        vkDestroyCommandPool(m_device, frameData[i].graphicsCommandPool, nullptr);
-        vkDestroyCommandPool(m_device, frameData[i].computeCommandPool, nullptr);
+        vkDestroyCommandPool(device, frameData[i].graphicsCommandPool, nullptr);
+        vkDestroyCommandPool(device, frameData[i].computeCommandPool, nullptr);
 
-        vkDestroyFence(m_device, frameData[i].renderFence, nullptr);
-        vkDestroyFence(m_device, frameData[i].computeFence, nullptr);
-        vkDestroySemaphore(m_device, frameData[i].renderSemaphore, nullptr);
-        vkDestroySemaphore(m_device, frameData[i].swapchainSemaphore, nullptr);
+        vkDestroyFence(device, frameData[i].renderFence, nullptr);
+        vkDestroyFence(device, frameData[i].computeFence, nullptr);
+        vkDestroySemaphore(device, frameData[i].renderSemaphore, nullptr);
+        vkDestroySemaphore(device, frameData[i].swapchainSemaphore, nullptr);
     }
     
-    vkDestroyCommandPool(m_device, m_immTransfer.pool, nullptr);
-    vkDestroyFence(m_device, m_immTransfer.fence, nullptr);
+    vkDestroyCommandPool(device, immTransfer.pool, nullptr);
+    vkDestroyFence(device, immTransfer.fence, nullptr);
 
     drawImage->destroy();
     resolveImage->destroy();
@@ -89,7 +89,7 @@ void Engine::cleanup(){
 
     for(auto& [sceneName, scene] : loadedGLTFs){
         for(VkSampler sampler : scene->samplers){
-            vkDestroySampler(m_device, sampler, nullptr);
+            vkDestroySampler(device, sampler, nullptr);
         }
         
         for(auto& [meshName, mesh] : scene->meshes){
@@ -110,36 +110,36 @@ void Engine::cleanup(){
     materialBuffer->destroy();
     lightBuffer->destroy();
 
-    vkDestroyPipelineCache(m_device, particleComputePipelineCache, nullptr);
+    vkDestroyPipelineCache(device, particleComputePipelineCache, nullptr);
     for(auto& [type, pipeline]: particlePipelineMap){
-        vkDestroyPipeline(m_device, pipeline, nullptr);
+        vkDestroyPipeline(device, pipeline, nullptr);
     }
 
     for(auto& sema : particleSystemGarbage){
-        vkDestroySemaphore(m_device, sema, nullptr);
+        vkDestroySemaphore(device, sema, nullptr);
     }
 
     for(auto& ps: particleSystems){
         ps.devicePositionBufferA->destroy();
         ps.devicePositionBufferB->destroy();
         ps.deviceVelocityBuffer->destroy();
-        vkDestroySemaphore(m_device, ps.particleTLSemaphore, nullptr);
+        vkDestroySemaphore(device, ps.particleTLSemaphore, nullptr);
     }
 
     checkerboardImage->destroy();
 
-    vkDestroySampler(m_device, defaultLinearSampler, nullptr);
-    vkDestroySampler(m_device, defaultNearestSampler, nullptr);
+    vkDestroySampler(device, defaultLinearSampler, nullptr);
+    vkDestroySampler(device, defaultNearestSampler, nullptr);
 
-    vmaDestroyAllocator(m_allocator);
+    vmaDestroyAllocator(vmaAllocator);
 
-    m_swapchain->destroySwapchain();
+    swapchain->destroySwapchain();
 
-	vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
-	vkDestroyDevice(m_device, nullptr);
+	vkDestroySurfaceKHR(instance, surface, nullptr);
+	vkDestroyDevice(device, nullptr);
 		
-	vkb::destroy_debug_utils_messenger(m_instance, m_debugMessenger);
-	vkDestroyInstance(m_instance, nullptr);
+	vkb::destroy_debug_utils_messenger(instance, debugMessenger);
+	vkDestroyInstance(instance, nullptr);
 	SDL_DestroyWindow(pWindow);
 
     cleanedUp = true;
@@ -205,14 +205,14 @@ void Engine::initVulkan(){
         throw std::runtime_error(instanceBuilderRet.error().message() + "\n");
     }
     vkb::Instance vkbInstance = instanceBuilderRet.value();
-    m_instance = vkbInstance.instance;
+    instance = vkbInstance.instance;
 
     if(vkbInstance.debug_messenger && useDebugMessenger){
-        m_debugMessenger = vkbInstance.debug_messenger;
+        debugMessenger = vkbInstance.debug_messenger;
     }       
 
     
-    if(!SDL_Vulkan_CreateSurface(pWindow, m_instance, nullptr, &m_surface)){
+    if(!SDL_Vulkan_CreateSurface(pWindow, instance, nullptr, &surface)){
        const char* err = SDL_GetError();
        std::cout << err << std::endl;
     }
@@ -242,20 +242,20 @@ void Engine::initVulkan(){
     };
 
     vkb::PhysicalDeviceSelector vkbSelector{ vkbInstance };
-	vkb::PhysicalDevice physicalDevice = vkbSelector
+	vkb::PhysicalDevice vkbPhysicalDevice = vkbSelector
 		.set_minimum_version(1, 3)
 		.set_required_features_13(features13)
 		.set_required_features_12(features12)
-		.set_surface(m_surface)
+		.set_surface(surface)
 		.select()
 		.value();
     
-    vkb::DeviceBuilder vkbBuilder { physicalDevice };
+    vkb::DeviceBuilder vkbBuilder { vkbPhysicalDevice };
 
     vkb::Device vkbDevice = vkbBuilder.build().value();
-    uint32_t sampler = physicalDevice.properties.limits.maxDescriptorSetSamplers;
-    uint32_t buffer = physicalDevice.properties.limits.maxDescriptorSetStorageBuffers;
-    uint32_t images = physicalDevice.properties.limits.maxDescriptorSetStorageImages;
+    uint32_t sampler = vkbPhysicalDevice.properties.limits.maxDescriptorSetSamplers;
+    uint32_t buffer = vkbPhysicalDevice.properties.limits.maxDescriptorSetStorageBuffers;
+    uint32_t images = vkbPhysicalDevice.properties.limits.maxDescriptorSetStorageImages;
     if(sampler < SAMPLER_COUNT){
         SAMPLER_COUNT = sampler;
     }
@@ -266,27 +266,27 @@ void Engine::initVulkan(){
         IMAGE_COUNT = images;
     }
 
-    m_physicalDevice = physicalDevice.physical_device;
-    m_device = vkbDevice.device;
+    physicalDevice = vkbPhysicalDevice.physical_device;
+    device = vkbDevice.device;
 
-    m_graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
-    m_graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
-    m_computeQueue = vkbDevice.get_queue(vkb::QueueType::compute).value();
-    m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::compute).value();
+    graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+    graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+    computeQueue = vkbDevice.get_queue(vkb::QueueType::compute).value();
+    computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::compute).value();
     // m_computeQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
     // m_computeQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
-    m_transferQueue = vkbDevice.get_queue(vkb::QueueType::transfer).value();
-    m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::transfer).value();
+    transferQueue = vkbDevice.get_queue(vkb::QueueType::transfer).value();
+    transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::transfer).value();
     // m_transferQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
     // m_transferQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
 
     VmaAllocatorCreateInfo allocatorInfo = {
         .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-        .physicalDevice = m_physicalDevice,
-        .device = m_device,
-        .instance = m_instance
+        .physicalDevice = physicalDevice,
+        .device = device,
+        .instance = instance
     };
-    vmaCreateAllocator(&allocatorInfo, &m_allocator);
+    vmaCreateAllocator(&allocatorInfo, &vmaAllocator);
 }
 
 void Engine::initCommands(){
@@ -295,20 +295,20 @@ void Engine::initCommands(){
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = nullptr, 
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = m_graphicsQueueFamily
+        .queueFamilyIndex = graphicsQueueFamily
     };
 
     VkCommandPoolCreateInfo computeCommandPoolInfo =  {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = nullptr, 
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = m_computeQueueFamily
+        .queueFamilyIndex = computeQueueFamily
     };
 	
 	for (int i = 0; i < 2; i++) {
 
-		vkCreateCommandPool(m_device, &graphicsCommandPoolInfo, nullptr, &frameData[i].graphicsCommandPool);
-		vkCreateCommandPool(m_device, &computeCommandPoolInfo, nullptr, &frameData[i].computeCommandPool);
+		vkCreateCommandPool(device, &graphicsCommandPoolInfo, nullptr, &frameData[i].graphicsCommandPool);
+		vkCreateCommandPool(device, &computeCommandPoolInfo, nullptr, &frameData[i].computeCommandPool);
 
 		VkCommandBufferAllocateInfo cmdAllocInfo = {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -318,35 +318,35 @@ void Engine::initCommands(){
             .commandBufferCount = 1
         };
 
-		vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &frameData[i].graphicsCommandBuffer);
+		vkAllocateCommandBuffers(device, &cmdAllocInfo, &frameData[i].graphicsCommandBuffer);
 
         cmdAllocInfo.commandPool = frameData[i].computeCommandPool;
-		vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &frameData[i].computeCommandBuffer);
+		vkAllocateCommandBuffers(device, &cmdAllocInfo, &frameData[i].computeCommandBuffer);
 	}
 
     VkCommandPoolCreateInfo transferCommandPoolInfo =  {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = nullptr, 
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = m_transferQueueFamily
+        .queueFamilyIndex = transferQueueFamily
     };
-    vkCreateCommandPool(m_device, &transferCommandPoolInfo, nullptr, &m_immTransfer.pool);
+    vkCreateCommandPool(device, &transferCommandPoolInfo, nullptr, &immTransfer.pool);
     VkCommandBufferAllocateInfo cmdAllocInfo = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = nullptr,
-        .commandPool = m_immTransfer.pool,
+        .commandPool = immTransfer.pool,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1
     };
-    vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &m_immTransfer.buffer);
+    vkAllocateCommandBuffers(device, &cmdAllocInfo, &immTransfer.buffer);
     
 }
 
 void Engine::initSwapchain(){
     windowWidth = 1600;
     windowHeight = 900;
-    m_swapchain = std::make_unique<Swapchain>(m_device, m_physicalDevice, m_surface);
-    m_swapchain->createSwapchain(windowWidth, windowHeight);
+    swapchain = std::make_unique<Swapchain>(device, physicalDevice, surface);
+    swapchain->createSwapchain(windowWidth, windowHeight);
 }
 
 void Engine::initDrawResources(){
@@ -370,21 +370,21 @@ void Engine::initDrawResources(){
     drawExtent.width = drawImgExtent.width;
     drawExtent.height = drawImgExtent.height;
 
-    drawImage = std::make_unique<Image>(m_device, m_allocator, 
+    drawImage = std::make_unique<Image>(device, vmaAllocator, 
         drawImgExtent, drawImgFormat, drawImgUsage,
         VK_IMAGE_ASPECT_COLOR_BIT,
         VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
         VK_SAMPLE_COUNT_4_BIT, 1
     );
 
-    resolveImage = std::make_unique<Image>(m_device, m_allocator, 
+    resolveImage = std::make_unique<Image>(device, vmaAllocator, 
         drawImgExtent, drawImgFormat, drawImgUsage,
         VK_IMAGE_ASPECT_COLOR_BIT,
         VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
         VK_SAMPLE_COUNT_1_BIT, 1
     );
 
-    depthImage = std::make_unique<Image>(m_device, m_allocator, 
+    depthImage = std::make_unique<Image>(device, vmaAllocator, 
         drawImgExtent, depthImgFormat, depthImgUsage,
         VK_IMAGE_ASPECT_DEPTH_BIT,
         VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
@@ -405,14 +405,14 @@ void Engine::initSynchronization(){
     };
     
 	for (int i = 0; i < 2; i++) {
-		vkCreateFence(m_device, &fenceInfo, nullptr, &frameData[i].renderFence);
-		vkCreateFence(m_device, &fenceInfo, nullptr, &frameData[i].computeFence);
+		vkCreateFence(device, &fenceInfo, nullptr, &frameData[i].renderFence);
+		vkCreateFence(device, &fenceInfo, nullptr, &frameData[i].computeFence);
 
-		vkCreateSemaphore(m_device, &semInfo, nullptr, &frameData[i].swapchainSemaphore);
-		vkCreateSemaphore(m_device, &semInfo, nullptr, &frameData[i].renderSemaphore);
+		vkCreateSemaphore(device, &semInfo, nullptr, &frameData[i].swapchainSemaphore);
+		vkCreateSemaphore(device, &semInfo, nullptr, &frameData[i].renderSemaphore);
 	}
 
-    vkCreateFence(m_device, &fenceInfo, nullptr, &m_immTransfer.fence);
+    vkCreateFence(device, &fenceInfo, nullptr, &immTransfer.fence);
 }
 
 void Engine::initDescriptors(){
@@ -432,7 +432,7 @@ void Engine::initDescriptors(){
         .pPoolSizes = poolSizes.data()        
     };
 
-    vkCreateDescriptorPool(m_device, &descriptorPoolInfo, nullptr, &m_descriptorPool);
+    vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPoolDefault);
 
     VkDescriptorSetLayoutBinding storage = {
         .binding = STORAGE_BINDING,
@@ -483,34 +483,34 @@ void Engine::initDescriptors(){
         .pBindings = bindings.data()
     };
 
-    vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_descriptorLayout);
+    vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorLayoutBindless);
 
     VkDescriptorSetAllocateInfo setInfo = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .pNext = nullptr,
-        .descriptorPool = m_descriptorPool,
+        .descriptorPool = descriptorPoolDefault,
         .descriptorSetCount = 1,
-        .pSetLayouts = &m_descriptorLayout
+        .pSetLayouts = &descriptorLayoutBindless
     };
 
-    vkAllocateDescriptorSets(m_device, &setInfo, &m_descriptorSet);
+    vkAllocateDescriptorSets(device, &setInfo, &descriptorSetBindless);
 }
 
 void Engine::initPipelines(){
     pb = std::make_unique<PipelineBuilder>();
     slang::createGlobalSession(slangGlobalSession.writeRef());
-    auto slangTargets{std::to_array<slang::TargetDesc>({
+    slangTargets = {
         {
             .format{SLANG_SPIRV},
             .profile{slangGlobalSession->findProfile("spirv_1_4")}
         }
-    })};
-    auto slangOptions{std::to_array<slang::CompilerOptionEntry>({
+    };
+    slangOptions = {
         {
             slang::CompilerOptionName::EmitSpirvDirectly,
             {slang::CompilerOptionValueKind::Int, 1}
         }
-    })};
+    };
     slangDefaultSessionDesc = {
         .targets{slangTargets.data()},
         .targetCount{SlangInt(slangTargets.size())},
@@ -518,7 +518,7 @@ void Engine::initPipelines(){
         .compilerOptionEntries{slangOptions.data()},
         .compilerOptionEntryCount{uint32_t(slangOptions.size())}
     };
-
+    initPipelineLayouts();
     initMeshPipelines();
     initParticlePipelines();
 
@@ -528,31 +528,75 @@ void Engine::initPipelines(){
     // createParticleSystem("chua", 100000, 30.0f, glm::vec3(0.0f), glm::vec3(2.0f));
 }
 
+void Engine::initPipelineLayouts(){
+    /////// MESH
+    VkPushConstantRange meshPc = {
+        .stageFlags = VK_SHADER_STAGE_ALL,
+        .offset = 0,
+        .size = sizeof(PushConstants)
+    };
+
+	VkPipelineLayoutCreateInfo meshLayoutInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptorLayoutBindless,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &meshPc
+    };
+	vkCreatePipelineLayout(device, &meshLayoutInfo, nullptr, &meshPipelineLayout);
+
+    ////// Particle Draw
+    VkPushConstantRange partPc = {
+        .stageFlags = VK_SHADER_STAGE_ALL,
+        .offset = 0,
+        .size = sizeof(ParticlePushConstants)
+    };    
+
+	VkPipelineLayoutCreateInfo partLayoutInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptorLayoutBindless,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &partPc
+    };
+	vkCreatePipelineLayout(device, &partLayoutInfo, nullptr, &particleDrawPipelineLayout);
+
+
+    /////// Compute Cache & Layout    if (particlePipelineMap.empty()){
+    VkPushConstantRange compPc = {
+        .stageFlags = VK_SHADER_STAGE_ALL,
+        .offset = 0,
+        .size = sizeof(ParticleComputePushConstants)
+    };
+    VkPipelineLayoutCreateInfo compLayoutInfo = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptorLayoutBindless,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &compPc
+    };
+    vkCreatePipelineLayout(device, &compLayoutInfo, nullptr, &particleComputePipelineLayout); 
+
+    VkPipelineCacheCreateInfo particleComputeCacheInfo{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+        .pNext = nullptr
+    };
+    vkCreatePipelineCache(device, &particleComputeCacheInfo, nullptr, &particleComputePipelineCache);
+}
+
 void Engine::initMeshPipelines(){
     
     VkShaderModule phong;
     if(loadShader(&phong, "../../shaders/rendering/phong.slang")){
         std::cout << "Successfully built phong shader." << std::endl;
     }
-    
-    VkPushConstantRange pc = {
-        .stageFlags = VK_SHADER_STAGE_ALL,
-        .offset = 0,
-        .size = sizeof(PushConstants)
-    };
 
-	VkPipelineLayoutCreateInfo layoutInfo = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
-        .setLayoutCount = 1,
-        .pSetLayouts = &m_descriptorLayout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &pc
-    };
-	vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &meshPipelineLayout);
-
-    
 	pb->clear();
 	pb->pipeline_layout = meshPipelineLayout;
 	pb->setShaders(phong, phong);
@@ -560,18 +604,16 @@ void Engine::initMeshPipelines(){
 	pb->setPolygonMode(VK_POLYGON_MODE_FILL);
 	pb->setCullingMode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE);
 	pb->setMultisampling(VK_SAMPLE_COUNT_4_BIT);
-    // pb->setMultisamplingNone();
 	pb->disableBlending();
 	pb->enableDepthtest(VK_TRUE, VK_COMPARE_OP_GREATER_OR_EQUAL);
-    // pb->disableDepthtest();
 	pb->setColorAttachmentFormat(drawImage->format);
 	pb->setDepthAttachmentFormat(depthImage->format);
-	meshPipelineOpaque = pb->buildPipeline(m_device);
+	meshPipelineOpaque = pb->buildPipeline(device);
 
     pb->enableBlending(VK_BLEND_FACTOR_ONE);
-    meshPipelineTransparent = pb->buildPipeline(m_device);
+    meshPipelineTransparent = pb->buildPipeline(device);
 
-	vkDestroyShaderModule(m_device, phong, nullptr);
+	vkDestroyShaderModule(device, phong, nullptr);
 }
 
 void Engine::initParticlePipelines(){
@@ -580,22 +622,6 @@ void Engine::initParticlePipelines(){
 		std::cout << "Successfully built particle shader." << std::endl;
 	}
 
-    VkPushConstantRange pcDraw = {
-        .stageFlags = VK_SHADER_STAGE_ALL,
-        .offset = 0,
-        .size = sizeof(ParticlePushConstants)
-    };    
-
-	VkPipelineLayoutCreateInfo layoutInfo = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
-        .setLayoutCount = 1,
-        .pSetLayouts = &m_descriptorLayout,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &pcDraw
-    };
-	vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &particleDrawPipelineLayout);
     
 	pb->clear();
 	pb->pipeline_layout = particleDrawPipelineLayout;
@@ -608,16 +634,16 @@ void Engine::initParticlePipelines(){
 	pb->enableDepthtest(VK_TRUE, VK_COMPARE_OP_GREATER_OR_EQUAL);
 	pb->setColorAttachmentFormat(drawImage->format);
 	pb->setDepthAttachmentFormat(depthImage->format);
-	particleDrawPipeline = pb->buildPipeline(m_device);
+	particleDrawPipeline = pb->buildPipeline(device);
 
-	vkDestroyShaderModule(m_device, particle, nullptr);
+	vkDestroyShaderModule(device, particle, nullptr);
 }
 
 void Engine::initData(){
     cam = std::make_unique<Camera>((float)drawExtent.width, (float)drawExtent.height);
     
     //Create UBO Buffer
-    uboBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+    uboBuffer = std::make_unique<Buffer>(device, vmaAllocator, sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
     VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT );
     
     ubo.camPos = cam->getPos();
@@ -631,12 +657,12 @@ void Engine::initData(){
     //Material Buffer
     materials.reserve(32);
     VkBufferUsageFlags materialUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    materialBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(MaterialData) * materials.capacity(), 
+    materialBuffer = std::make_unique<Buffer>(device, vmaAllocator, sizeof(MaterialData) * materials.capacity(), 
         materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
     
     lightsPoint.reserve(32);
     VkBufferUsageFlags lightUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    lightBuffer = std::make_unique<Buffer>(m_device, m_allocator, sizeof(Light) * lightsPoint.capacity(), 
+    lightBuffer = std::make_unique<Buffer>(device, vmaAllocator, sizeof(Light) * lightsPoint.capacity(), 
         lightUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
 
     VkBufferDeviceAddressInfo bdaInfo {
@@ -644,9 +670,9 @@ void Engine::initData(){
         .pNext = nullptr,
         .buffer = materialBuffer->buffer
     };
-    materialBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
+    materialBufferAddress = vkGetBufferDeviceAddress(device, &bdaInfo);
     bdaInfo.buffer = lightBuffer->buffer;
-    lightBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
+    lightBufferAddress = vkGetBufferDeviceAddress(device, &bdaInfo);
 
 
     //Create default texture
@@ -668,10 +694,10 @@ void Engine::initData(){
         .magFilter = VK_FILTER_NEAREST,
         .minFilter = VK_FILTER_NEAREST
     };
-	vkCreateSampler(m_device, &sampler, nullptr, &defaultNearestSampler);
+	vkCreateSampler(device, &sampler, nullptr, &defaultNearestSampler);
 	sampler.magFilter = VK_FILTER_LINEAR;
 	sampler.minFilter = VK_FILTER_LINEAR;
-	vkCreateSampler(m_device, &sampler, nullptr, &defaultLinearSampler);
+	vkCreateSampler(device, &sampler, nullptr, &defaultLinearSampler);
 
     //Update descriptors
     VkDescriptorBufferInfo uboInfo = {
@@ -682,7 +708,7 @@ void Engine::initData(){
     VkWriteDescriptorSet uboWrite {
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .pNext = nullptr, 
-        .dstSet = m_descriptorSet,
+        .dstSet = descriptorSetBindless,
         .dstBinding = UBO_BINDING,
         .dstArrayElement = 0,
         .descriptorCount = 1,
@@ -691,7 +717,7 @@ void Engine::initData(){
         .pBufferInfo = &uboInfo,
         .pTexelBufferView = nullptr
     };
-    vkUpdateDescriptorSets(m_device, 1, &uboWrite, 0, nullptr);
+    vkUpdateDescriptorSets(device, 1, &uboWrite, 0, nullptr);
 
     meshThread = std::thread(&Engine::meshUploader, this);
     
@@ -715,17 +741,17 @@ void Engine::initDearImGui(){
         .pPoolSizes = &poolSize
     };
 
-    vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_ImguiPool);
+    vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPoolImgui);
 
     ImGui::CreateContext();
     ImGui_ImplSDL3_InitForVulkan(pWindow);
     ImGui_ImplVulkan_InitInfo imguiVulkanInfo = {
-        .Instance = m_instance,
-        .PhysicalDevice = m_physicalDevice,
-        .Device = m_device,
-        .QueueFamily = m_graphicsQueueFamily,
-        .Queue = m_graphicsQueue,
-        .DescriptorPool = m_ImguiPool,
+        .Instance = instance,
+        .PhysicalDevice = physicalDevice,
+        .Device = device,
+        .QueueFamily = graphicsQueueFamily,
+        .Queue = graphicsQueue,
+        .DescriptorPool = descriptorPoolImgui,
         .MinImageCount = 2,
         .ImageCount = 2,
         .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
@@ -735,7 +761,7 @@ void Engine::initDearImGui(){
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
         .pNext = nullptr,
         .colorAttachmentCount = 1,
-        .pColorAttachmentFormats = &m_swapchain->format
+        .pColorAttachmentFormats = &swapchain->format
     };
     
     ImGui::CreateContext();
@@ -744,11 +770,6 @@ void Engine::initDearImGui(){
 
 //Utility
 bool Engine::loadShader(VkShaderModule* outShader, std::string filePath) {    
-    std::ifstream file(filePath, std::ios::ate | std::ios::binary);
-	if (!file.is_open()) {
-        std::cout << "Shaderfile not found" << std::endl;
-        return false;
-	}
     Slang::ComPtr<slang::ISession> slangSession;
     slangGlobalSession->createSession(slangDefaultSessionDesc, slangSession.writeRef());
     Slang::ComPtr<slang::IModule> slangModule{ slangSession->loadModuleFromSource(filePath.c_str(), filePath.c_str(), nullptr, nullptr) };
@@ -762,17 +783,35 @@ bool Engine::loadShader(VkShaderModule* outShader, std::string filePath) {
         .pCode = (uint32_t*)spirv->getBufferPointer() 
     };
 
-	if(vkCreateShaderModule(m_device, &shader, nullptr, outShader) != VK_SUCCESS){
+	if(vkCreateShaderModule(device, &shader, nullptr, outShader) != VK_SUCCESS){
         std::cout << "Failed to create shader module at " << filePath << std::endl;
         return false;
     }
     return true;
 }
 
+void Engine::reloadShaders(){
+    vkDeviceWaitIdle(device);
+    
+    vkDestroyPipeline(device, meshPipelineOpaque, nullptr);
+    vkDestroyPipeline(device, meshPipelineTransparent, nullptr);
+    
+    for (auto& [name, pipeline] : particlePipelineMap) {
+        vkDestroyPipeline(device, pipeline, nullptr);
+
+        glm::vec3 defVelocity = particleVelocityMap.at(name);
+        registerParticleSystem(name, defVelocity);
+    };
+    
+    initMeshPipelines();
+    
+    std::cout << "Shaders reloaded!" << std::endl;
+}
+
 std::shared_ptr<Image> Engine::createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped){
     size_t dataSize = size.depth * size.width * size.height * sizeof(float);
     VkBufferUsageFlags stagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    Buffer stagingBuffer = Buffer(m_device, m_allocator, dataSize, stagingUsage, 
+    Buffer stagingBuffer = Buffer(device, vmaAllocator, dataSize, stagingUsage, 
         VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
 	if (stagingBuffer.allocationInfo.pMappedData == nullptr) {
@@ -780,7 +819,7 @@ std::shared_ptr<Image> Engine::createImageFromData(void* data, VkExtent3D size, 
 	}
 	memcpy(stagingBuffer.allocationInfo.pMappedData, data, dataSize);
 
-    std::unique_ptr<Image> image = std::make_unique<Image>(m_device, m_allocator, size, format, 
+    std::unique_ptr<Image> image = std::make_unique<Image>(device, vmaAllocator, size, format, 
         usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 
         VK_IMAGE_ASPECT_COLOR_BIT, 0,
         VK_SAMPLE_COUNT_1_BIT, 1
@@ -789,7 +828,7 @@ std::shared_ptr<Image> Engine::createImageFromData(void* data, VkExtent3D size, 
 
     prepImmediateTransfer();
     
-    image->transitionTo(m_immTransfer.buffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
+    image->transitionTo(immTransfer.buffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
 
     VkBufferImageCopy copyRegion = {
         .bufferOffset = 0,
@@ -803,9 +842,9 @@ std::shared_ptr<Image> Engine::createImageFromData(void* data, VkExtent3D size, 
         .baseArrayLayer = 0,
         .layerCount = 1
     };
-    vkCmdCopyBufferToImage(m_immTransfer.buffer, stagingBuffer.buffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+    vkCmdCopyBufferToImage(immTransfer.buffer, stagingBuffer.buffer, image->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
     
-    image->transitionTo(m_immTransfer.buffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
+    image->transitionTo(immTransfer.buffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
 
 	submitImmediateTransfer();
 
@@ -824,9 +863,9 @@ MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> verti
     VkBufferUsageFlags indexUsage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     VkBufferUsageFlags stagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
-    mesh.vertexBuffer = std::make_unique<Buffer>(m_device, m_allocator, vertexBufferSize, vertexUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
-    mesh.indexBuffer = std::make_unique<Buffer>(m_device, m_allocator, indexBufferSize, indexUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
-    std::unique_ptr<Buffer> stagingBuffer = std::make_unique<Buffer>(m_device, m_allocator, vertexBufferSize + indexBufferSize, stagingUsage, VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+    mesh.vertexBuffer = std::make_unique<Buffer>(device, vmaAllocator, vertexBufferSize, vertexUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+    mesh.indexBuffer = std::make_unique<Buffer>(device, vmaAllocator, indexBufferSize, indexUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+    std::unique_ptr<Buffer> stagingBuffer = std::make_unique<Buffer>(device, vmaAllocator, vertexBufferSize + indexBufferSize, stagingUsage, VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
 
 	VkBufferDeviceAddressInfo addressInfo = {
@@ -834,7 +873,7 @@ MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> verti
         .pNext = nullptr,
         .buffer = mesh.vertexBuffer->buffer
     };
-	mesh.vertexBufferAddress = vkGetBufferDeviceAddress(m_device, &addressInfo);
+	mesh.vertexBufferAddress = vkGetBufferDeviceAddress(device, &addressInfo);
 	
 	if (stagingBuffer->allocationInfo.pMappedData == nullptr) {
 		throw std::runtime_error("Staging buffer not mapped.");
@@ -850,14 +889,14 @@ MeshData Engine::uploadMesh(std::span<uint32_t> indices, std::span<Vertex> verti
 	vert_copy.srcOffset = 0;
 	vert_copy.dstOffset = 0;
 
-	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer->buffer, mesh.vertexBuffer->buffer, 1, &vert_copy);
+	vkCmdCopyBuffer(immTransfer.buffer, stagingBuffer->buffer, mesh.vertexBuffer->buffer, 1, &vert_copy);
 
 	VkBufferCopy ind_copy = {};
 	ind_copy.size = indexBufferSize;
 	ind_copy.srcOffset = vertexBufferSize;
 	ind_copy.dstOffset = 0;
 
-	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer->buffer, mesh.indexBuffer->buffer, 1, &ind_copy);
+	vkCmdCopyBuffer(immTransfer.buffer, stagingBuffer->buffer, mesh.indexBuffer->buffer, 1, &ind_copy);
 
 	submitImmediateTransfer();
 
@@ -1030,7 +1069,7 @@ uint32_t Engine::addTexture(const TextureData& data, std::string name){
     VkWriteDescriptorSet samplerWrite {
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .pNext = nullptr, 
-        .dstSet = m_descriptorSet,
+        .dstSet = descriptorSetBindless,
         .dstBinding = SAMPLER_BINDING,
         .dstArrayElement = index,
         .descriptorCount = 1,
@@ -1039,7 +1078,7 @@ uint32_t Engine::addTexture(const TextureData& data, std::string name){
         .pBufferInfo = nullptr,
         .pTexelBufferView = nullptr
     };
-    vkUpdateDescriptorSets(m_device, 1, &samplerWrite, 0, nullptr);
+    vkUpdateDescriptorSets(device, 1, &samplerWrite, 0, nullptr);
 
     textures.push_back(data);
     return index;
@@ -1050,10 +1089,7 @@ uint32_t Engine::addMaterial(const MaterialData& data, std::string name){
         return matNameToIndex.at(name);
     }
     //Check if this material will cause buffer to resize
-    bool willResize = false;
-    if(materials.size() == materials.capacity()){
-        willResize = true;
-    }
+    bool willResize = materials.size() == materials.capacity() ? true : false;
 
     //Point staging copy to where next element will be pushed to
 	VkBufferCopy stagingCopy = {
@@ -1077,7 +1113,7 @@ uint32_t Engine::addMaterial(const MaterialData& data, std::string name){
     
         VkBufferUsageFlags materialUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         
-        materialBuffer = std::make_unique<Buffer>(m_device, m_allocator, materials.capacity() * sizeof(MaterialData), 
+        materialBuffer = std::make_unique<Buffer>(device, vmaAllocator, materials.capacity() * sizeof(MaterialData), 
             materialUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
 
         VkBufferDeviceAddressInfo bdaInfo {
@@ -1085,10 +1121,10 @@ uint32_t Engine::addMaterial(const MaterialData& data, std::string name){
             .pNext = nullptr,
             .buffer = materialBuffer->buffer
         };
-        materialBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
+        materialBufferAddress = vkGetBufferDeviceAddress(device, &bdaInfo);
     }
     
-    Buffer stagingBuffer = Buffer(m_device, m_allocator, materials.capacity() * sizeof(MaterialData), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    Buffer stagingBuffer = Buffer(device, vmaAllocator, materials.capacity() * sizeof(MaterialData), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 	if (stagingBuffer.allocationInfo.pMappedData == nullptr) {
 		throw std::runtime_error("Material staging buffer not mapped.");
@@ -1097,7 +1133,7 @@ uint32_t Engine::addMaterial(const MaterialData& data, std::string name){
 	memcpy(stagingBuffer.allocationInfo.pMappedData, materials.data(), materials.size() * sizeof(MaterialData));
 	prepImmediateTransfer();
 
-	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer.buffer, materialBuffer->buffer, 1, &stagingCopy);
+	vkCmdCopyBuffer(immTransfer.buffer, stagingBuffer.buffer, materialBuffer->buffer, 1, &stagingCopy);
 
     submitImmediateTransfer();
 
@@ -1120,7 +1156,7 @@ void Engine::addLights(const std::vector<Light>& lights){
 
     VkBufferUsageFlags lightUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         
-    lightBuffer = std::make_unique<Buffer>(m_device, m_allocator, lightsPoint.size() * sizeof(Light), 
+    lightBuffer = std::make_unique<Buffer>(device, vmaAllocator, lightsPoint.size() * sizeof(Light), 
         lightUsage, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
 
     VkBufferDeviceAddressInfo bdaInfo {
@@ -1128,9 +1164,9 @@ void Engine::addLights(const std::vector<Light>& lights){
         .pNext = nullptr,
         .buffer = lightBuffer->buffer
     };
-    lightBufferAddress = vkGetBufferDeviceAddress(m_device, &bdaInfo);
+    lightBufferAddress = vkGetBufferDeviceAddress(device, &bdaInfo);
 
-    Buffer stagingBuffer = Buffer(m_device, m_allocator, lightsPoint.size() * sizeof(Light), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    Buffer stagingBuffer = Buffer(device, vmaAllocator, lightsPoint.size() * sizeof(Light), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 	
     if (stagingBuffer.allocationInfo.pMappedData == nullptr) {
@@ -1139,7 +1175,7 @@ void Engine::addLights(const std::vector<Light>& lights){
 
 	memcpy(stagingBuffer.allocationInfo.pMappedData, lightsPoint.data(), lightsPoint.size() * sizeof(Light));
 	prepImmediateTransfer();
-	vkCmdCopyBuffer(m_immTransfer.buffer, stagingBuffer.buffer, lightBuffer->buffer, 1, &stagingCopy);
+	vkCmdCopyBuffer(immTransfer.buffer, stagingBuffer.buffer, lightBuffer->buffer, 1, &stagingCopy);
     submitImmediateTransfer();
     
 }
@@ -1231,7 +1267,7 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
         }
     
         VkSampler vksampler;
-        vkCreateSampler(m_device, &samplerCreateInfo, nullptr, &vksampler);
+        vkCreateSampler(device, &samplerCreateInfo, nullptr, &vksampler);
         scene->samplers.push_back(vksampler);
     }
 
@@ -1627,8 +1663,8 @@ void Engine::meshUploader(){
 
 //Transfer
 void Engine::prepImmediateTransfer(){
-    vkResetFences(m_device, 1, &m_immTransfer.fence);
-	vkResetCommandBuffer(m_immTransfer.buffer, 0);
+    vkResetFences(device, 1, &immTransfer.fence);
+	vkResetCommandBuffer(immTransfer.buffer, 0);
 
 	VkCommandBufferBeginInfo begin = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1636,17 +1672,17 @@ void Engine::prepImmediateTransfer(){
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
     };
 
-	vkBeginCommandBuffer(m_immTransfer.buffer, &begin);
+	vkBeginCommandBuffer(immTransfer.buffer, &begin);
 }
 
 void Engine::submitImmediateTransfer(){
 
-    vkEndCommandBuffer(m_immTransfer.buffer);
+    vkEndCommandBuffer(immTransfer.buffer);
 
 	VkCommandBufferSubmitInfo cmdInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
         .pNext = nullptr,
-        .commandBuffer = m_immTransfer.buffer
+        .commandBuffer = immTransfer.buffer
     };
 	VkSubmitInfo2 submit {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
@@ -1654,9 +1690,9 @@ void Engine::submitImmediateTransfer(){
         .commandBufferInfoCount = 1,
         .pCommandBufferInfos = &cmdInfo,
     };
-	vkQueueSubmit2(m_transferQueue, 1, &submit, m_immTransfer.fence);
+	vkQueueSubmit2(transferQueue, 1, &submit, immTransfer.fence);
 
-	vkWaitForFences(m_device, 1, &m_immTransfer.fence, true, 9999999999);
+	vkWaitForFences(device, 1, &immTransfer.fence, true, 9999999999);
 }
 
 //Provides default particle systems.
@@ -1676,33 +1712,6 @@ void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity)
         std::cout << "Succesfully built " << shaderFileName << " shader module." << std::endl;
     }
 
-    if (particlePipelineMap.empty()){
-        VkPushConstantRange pcComp = {
-            .stageFlags = VK_SHADER_STAGE_ALL,
-            .offset = 0,
-            .size = sizeof(ParticleComputePushConstants)
-        };
-        VkPipelineLayoutCreateInfo layoutInfo = {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-            .pNext = nullptr,
-            .flags = 0,
-            .setLayoutCount = 1,
-            .pSetLayouts = &m_descriptorLayout,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &pcComp
-        };
-        vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &particleComputePipelineLayout); 
-    }
-
-    if (particlePipelineMap.empty()){
-        VkPipelineCacheCreateInfo particleComputeCacheInfo{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
-            .pNext = nullptr
-        };
-
-        vkCreatePipelineCache(m_device, &particleComputeCacheInfo, nullptr, &particleComputePipelineCache);
-    }
-
     VkPipelineShaderStageCreateInfo particleComputeStageInfo {
         .sType=  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .pNext = nullptr,
@@ -1717,11 +1726,11 @@ void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity)
         .layout = particleComputePipelineLayout
     };
     VkPipeline computePipeline;
-	vkCreateComputePipelines(m_device, particleComputePipelineCache, 1, &computePipelineCreateInfo, nullptr, &computePipeline);
+	vkCreateComputePipelines(device, particleComputePipelineCache, 1, &computePipelineCreateInfo, nullptr, &computePipeline);
     particlePipelineMap.insert_or_assign(name, computePipeline);
     particleVelocityMap.insert_or_assign(name, defaultVelocity);
 
-    vkDestroyShaderModule(m_device, comp, nullptr);
+    vkDestroyShaderModule(device, comp, nullptr);
 }
 
 //Create an active instance of a particle system that has been registered.
@@ -1775,23 +1784,23 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
     }
     
 
-    Buffer positionStagingBuffer = Buffer(m_device, m_allocator, particleCount * sizeof(glm::vec4),
+    Buffer positionStagingBuffer = Buffer(device, vmaAllocator, particleCount * sizeof(glm::vec4),
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
         VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
-    Buffer velocityStagingBuffer = Buffer(m_device, m_allocator, particleCount * sizeof(glm::vec4),
+    Buffer velocityStagingBuffer = Buffer(device, vmaAllocator, particleCount * sizeof(glm::vec4),
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST, 
         VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
 
-    ps.devicePositionBufferA = std::make_unique<Buffer>(m_device, m_allocator, particleCount * sizeof(glm::vec4), 
+    ps.devicePositionBufferA = std::make_unique<Buffer>(device, vmaAllocator, particleCount * sizeof(glm::vec4), 
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
         VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
     
-    ps.devicePositionBufferB = std::make_unique<Buffer>(m_device, m_allocator, particleCount * sizeof(glm::vec4), 
+    ps.devicePositionBufferB = std::make_unique<Buffer>(device, vmaAllocator, particleCount * sizeof(glm::vec4), 
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
         VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
     
-    ps.deviceVelocityBuffer = std::make_unique<Buffer>(m_device, m_allocator, particleCount * sizeof(glm::vec4), 
+    ps.deviceVelocityBuffer = std::make_unique<Buffer>(device, vmaAllocator, particleCount * sizeof(glm::vec4), 
         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 
         VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
 
@@ -1810,9 +1819,9 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
         .pNext = nullptr,
         .buffer = ps.deviceVelocityBuffer->buffer
     };
-    ps.positionBufferA = vkGetBufferDeviceAddress(m_device, &positionAddressInfoA);
-    ps.positionBufferB = vkGetBufferDeviceAddress(m_device, &positionAddressInfoB);
-    ps.velocityBuffer  = vkGetBufferDeviceAddress(m_device, &velocityAddressInfo );
+    ps.positionBufferA = vkGetBufferDeviceAddress(device, &positionAddressInfoA);
+    ps.positionBufferB = vkGetBufferDeviceAddress(device, &positionAddressInfoB);
+    ps.velocityBuffer  = vkGetBufferDeviceAddress(device, &velocityAddressInfo );
     
     if (positionStagingBuffer.allocationInfo.pMappedData == nullptr) {
         throw std::runtime_error("Host position buffer not mapped.");
@@ -1829,9 +1838,9 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
         .size = particleCount * sizeof(glm::vec4)
     };
     prepImmediateTransfer();
-    vkCmdCopyBuffer(m_immTransfer.buffer, positionStagingBuffer.buffer, ps.devicePositionBufferA->buffer, 1, &posCopy);
-    vkCmdCopyBuffer(m_immTransfer.buffer, positionStagingBuffer.buffer, ps.devicePositionBufferB->buffer, 1, &posCopy);
-    vkCmdCopyBuffer(m_immTransfer.buffer, velocityStagingBuffer.buffer, ps.deviceVelocityBuffer->buffer,  1, &posCopy);
+    vkCmdCopyBuffer(immTransfer.buffer, positionStagingBuffer.buffer, ps.devicePositionBufferA->buffer, 1, &posCopy);
+    vkCmdCopyBuffer(immTransfer.buffer, positionStagingBuffer.buffer, ps.devicePositionBufferB->buffer, 1, &posCopy);
+    vkCmdCopyBuffer(immTransfer.buffer, velocityStagingBuffer.buffer, ps.deviceVelocityBuffer->buffer,  1, &posCopy);
     submitImmediateTransfer();
 
     VkSemaphoreTypeCreateInfo semTypeInfo = {
@@ -1843,31 +1852,31 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         .pNext = &semTypeInfo
     };
-    vkCreateSemaphore(m_device, &timelineInfo, nullptr, &ps.particleTLSemaphore);
+    vkCreateSemaphore(device, &timelineInfo, nullptr, &ps.particleTLSemaphore);
 
     particleSystems.push_back(std::move(ps));
 }
 
 //Drawing loop. Meshes and particles.
 void Engine::draw(){
-    VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().renderFence, VK_TRUE, 1000000000);
+    VkResult fenceResult = vkWaitForFences(device, 1, &getCurrentFrame().renderFence, VK_TRUE, 1000000000);
     if (fenceResult != VK_SUCCESS) {
         throw std::runtime_error("Fence wait failed!");
     }    
 	uint32_t index;
-	VkResult acquireResult = vkAcquireNextImageKHR(m_device, m_swapchain->swapchain, 1000000000, getCurrentFrame().swapchainSemaphore, VK_NULL_HANDLE, &index);
+	VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain->swapchain, 1000000000, getCurrentFrame().swapchainSemaphore, VK_NULL_HANDLE, &index);
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
         int32_t w = 0;
         int32_t h = 0;
 		SDL_GetWindowSizeInPixels(pWindow, &w, &h);
-        m_swapchain->resizeSwapchain(w, h);
+        swapchain->resizeSwapchain(w, h);
 		return;
 	}
 	else if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acqurie swapchain image!");
 	}
     
-    vkResetFences(m_device, 1, &getCurrentFrame().renderFence);
+    vkResetFences(device, 1, &getCurrentFrame().renderFence);
     VkCommandBuffer cmd = getCurrentFrame().graphicsCommandBuffer;
     vkResetCommandBuffer(cmd, 0);
     
@@ -1890,12 +1899,12 @@ void Engine::draw(){
     drawMeshes(cmd);
 
     resolveImage->transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-	m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    resolveImage->copyTo(cmd, m_swapchain->images.at(index));
+	swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    resolveImage->copyTo(cmd, swapchain->images.at(index));
 
-    m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    drawDearImGui(cmd, m_swapchain->images.at(index).view);
-    m_swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    drawDearImGui(cmd, swapchain->images.at(index).view);
+    swapchain->images.at(index).transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
 	vkEndCommandBuffer(cmd);
 
@@ -1952,7 +1961,7 @@ void Engine::draw(){
         .pSignalSemaphoreInfos = &semaphoreSignalSubmitInfo
     };
 
-    VkResult submitRes = vkQueueSubmit2(m_graphicsQueue, 1, &queueSubmitInfo, getCurrentFrame().renderFence);
+    VkResult submitRes = vkQueueSubmit2(graphicsQueue, 1, &queueSubmitInfo, getCurrentFrame().renderFence);
     if(submitRes != VK_SUCCESS){
         std::cout << "queue submit failed" << std::endl;
     }
@@ -1963,16 +1972,16 @@ void Engine::draw(){
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &getCurrentFrame().renderSemaphore,
         .swapchainCount = 1,
-        .pSwapchains = &m_swapchain->swapchain,
+        .pSwapchains = &swapchain->swapchain,
         .pImageIndices = &index
     };
 
-	VkResult presentRes = vkQueuePresentKHR(m_graphicsQueue, &presentInfo);
+	VkResult presentRes = vkQueuePresentKHR(graphicsQueue, &presentInfo);
 	if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_SUBOPTIMAL_KHR) {
         int32_t w = 0;
         int32_t h = 0;
 		SDL_GetWindowSizeInPixels(pWindow, &w, &h);
-        m_swapchain->resizeSwapchain(w, h);
+        swapchain->resizeSwapchain(w, h);
 	}
 	else if (presentRes != VK_SUCCESS) {
 		std::cout << "Failed to present to swapchain" << std::endl;
@@ -2016,7 +2025,7 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     auto start = std::chrono::system_clock::now();
     vkCmdBeginRendering(cmd, &rendering_info);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineOpaque);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &descriptorSetBindless, 0, nullptr);
     
     VkViewport viewport = {};
     viewport.x = 0;
@@ -2049,7 +2058,7 @@ void Engine::drawMeshes(VkCommandBuffer cmd){
     }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineTransparent);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelineLayout, 0, 1, &descriptorSetBindless, 0, nullptr);
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
@@ -2108,7 +2117,7 @@ void Engine::drawParticles(VkCommandBuffer cmd){
     auto start = std::chrono::system_clock::now();    
     vkCmdBeginRendering(cmd, &rendering_info);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particleDrawPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particleDrawPipelineLayout, 0, 1, &m_descriptorSet, 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particleDrawPipelineLayout, 0, 1, &descriptorSetBindless, 0, nullptr);
     
     VkViewport viewport = {};
     viewport.x = 0;
@@ -2154,11 +2163,11 @@ void Engine::drawParticles(VkCommandBuffer cmd){
 }
 
 void Engine::updateParticles(){
-    VkResult fenceResult = vkWaitForFences(m_device, 1, &getCurrentFrame().computeFence, VK_TRUE, 1000000000);
+    VkResult fenceResult = vkWaitForFences(device, 1, &getCurrentFrame().computeFence, VK_TRUE, 1000000000);
     if (fenceResult != VK_SUCCESS) {
         throw std::runtime_error("Fence wait failed!");
     }
-    vkResetFences(m_device, 1, &getCurrentFrame().computeFence);
+    vkResetFences(device, 1, &getCurrentFrame().computeFence);
     VkCommandBuffer cmd = getCurrentFrame().computeCommandBuffer;
     vkResetCommandBuffer(cmd, 0);
     VkCommandBufferBeginInfo commandBufferBeginInfo = {
@@ -2240,7 +2249,7 @@ void Engine::updateParticles(){
         .pSignalSemaphoreInfos = semaphoreSubmits.data()
     };
 
-    VkResult submitRes = vkQueueSubmit2(m_computeQueue, 1, &queueSubmitInfo, getCurrentFrame().computeFence);
+    VkResult submitRes = vkQueueSubmit2(computeQueue, 1, &queueSubmitInfo, getCurrentFrame().computeFence);
     if(submitRes != VK_SUCCESS){
         std::cout << "compute queue submit failed" << std::endl;
     }
@@ -2259,7 +2268,7 @@ void Engine::drawDearImGui(VkCommandBuffer cmd, VkImageView view){
     VkRenderingInfo renderingInfo {
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
         .pNext = nullptr,
-        .renderArea = VkRect2D { VkOffset2D { 0, 0 }, m_swapchain->extent },
+        .renderArea = VkRect2D { VkOffset2D { 0, 0 }, swapchain->extent },
         .layerCount = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments = &colorAttachment,
@@ -2307,6 +2316,9 @@ void Engine::run(){
                     mouseCaptured = !mouseCaptured;
                     SDL_CaptureMouse(mouseCaptured);
                     SDL_SetWindowRelativeMouseMode(pWindow, mouseCaptured);
+                    break;
+                case SDLK_R:
+                    reloadShaders();
                     break;
                 default:
                     break;

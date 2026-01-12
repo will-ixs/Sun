@@ -40,25 +40,34 @@ class Engine
     void initDearImGui();
     
     //Util
-    ImmediateTransfer m_immTransfer;
+    ImmediateTransfer immTransfer = {0};
     EngineStats stats = {0};
     void prepImmediateTransfer();
     void submitImmediateTransfer();
 
+    //Particles
     void registerDefaultParticleSystems();
     void registerParticleSystem(std::string type, glm::vec3 defaultVelocity = glm::vec3(0.0f));
     void createParticleSystem(std::string name, uint32_t particleCount, float lifeTime, 
         glm::vec3 originPosition = glm::vec3(0.0f), glm::vec3 originVariance = glm::vec3(0.0f), glm::vec3 velocityVariance = glm::vec3(0.0f));
+    
+    //Updates
     void updateScene();
     void updateGUI();
     
+    //Shaders
     bool loadShader(VkShaderModule* outShader, std::string filePath);
+    void reloadShaders();
+
+    //Loading
     bool loadGLTF(std::filesystem::path filePath);
     std::shared_ptr<Image> createImageFromData(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped);
     
+    //Rendering
     void createRenderablesFromNode(std::shared_ptr<GLTFNode> node);
     void sortTransparentRenderables();
     bool renderableVisible(const Renderable& r, const glm::mat4& viewProj);
+
     //Material / Textures util
     void addLights(const std::vector<Light>& lights);
     uint32_t addMaterial(const MaterialData& data, std::string name);
@@ -72,8 +81,10 @@ class Engine
     std::thread meshThread;
     
     //Pipelines
+    void initPipelineLayouts();
     void initMeshPipelines();
     void initParticlePipelines();
+    
     
     //Drawing
     void draw();
@@ -87,6 +98,8 @@ class Engine
     //Slang
     Slang::ComPtr<slang::IGlobalSession> slangGlobalSession;
     slang::SessionDesc slangDefaultSessionDesc;
+    std::vector<slang::TargetDesc> slangTargets; 
+    std::vector<slang::CompilerOptionEntry> slangOptions;  
     //Optons
     bool useValidation = false;
     bool useDebugMessenger = false;
@@ -97,21 +110,21 @@ class Engine
     uint32_t windowHeight;
 
     //Vulkan Resources
-    VkInstance m_instance;
-    VkDebugUtilsMessengerEXT m_debugMessenger;
-    VkPhysicalDevice m_physicalDevice;
-    VkDevice m_device;
-    VkSurfaceKHR m_surface;
-    VmaAllocator m_allocator;
+    VkInstance instance;
+    VkDebugUtilsMessengerEXT debugMessenger;
+    VkPhysicalDevice physicalDevice;
+    VkDevice device;
+    VkSurfaceKHR surface;
+    VmaAllocator vmaAllocator;
 
     //Swapchain
-    std::unique_ptr<Swapchain> m_swapchain;
+    std::unique_ptr<Swapchain> swapchain;
 
     //Descriptors
-    VkDescriptorPool m_ImguiPool;
-    VkDescriptorPool m_descriptorPool;
-    VkDescriptorSetLayout m_descriptorLayout;
-    VkDescriptorSet m_descriptorSet;
+    VkDescriptorPool descriptorPoolImgui;
+    VkDescriptorPool descriptorPoolDefault;
+    VkDescriptorSetLayout descriptorLayoutBindless;
+    VkDescriptorSet descriptorSetBindless;
     
     //Bindless stuff
     const uint32_t STORAGE_BINDING = 0;
@@ -139,12 +152,12 @@ class Engine
     std::unique_ptr<PipelineBuilder> pb;
 
     //Queue Info
-	VkQueue m_graphicsQueue;
-	uint32_t m_graphicsQueueFamily;
-    VkQueue m_computeQueue;
-    uint32_t m_computeQueueFamily;
-	VkQueue m_transferQueue;
-	uint32_t m_transferQueueFamily;
+	VkQueue graphicsQueue;
+	uint32_t graphicsQueueFamily;
+    VkQueue computeQueue;
+    uint32_t computeQueueFamily;
+	VkQueue transferQueue;
+	uint32_t transferQueueFamily;
 
     //Draw Resources
     std::unique_ptr<Image> drawImage;
