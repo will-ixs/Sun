@@ -123,7 +123,7 @@ void Image::transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLa
             break;
         case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
             imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-            imageBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+            imageBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT;
             break;
         case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
             imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
@@ -148,7 +148,7 @@ void Image::transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLa
         switch (newLayout) {
             case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
                 imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-                imageBarrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+                imageBarrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT| VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT;
                 break;
             case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
                 imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
@@ -167,7 +167,7 @@ void Image::transitionTo(VkCommandBuffer cmd, VkImageLayout oldLayout, VkImageLa
                 imageBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
                 break;
             case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
-                imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+                imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT;
                 imageBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
                 break;
             default:
