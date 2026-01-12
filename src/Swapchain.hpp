@@ -19,6 +19,7 @@ public:
     //Swapchain's resources
     VkSwapchainKHR swapchain;
     std::vector<Image> images;
+    std::vector<VkSemaphore> presentComplete;
     VkExtent2D extent;
     VkFormat format;
     
@@ -26,7 +27,7 @@ public:
     Swapchain(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface);
     ~Swapchain();
     
-    void createSwapchain(uint32_t width, uint32_t height);
+    void createSwapchain(uint32_t width, uint32_t height, bool recreate = false);
     void resizeSwapchain(uint32_t width, uint32_t height);
     void destroySwapchain();
     

@@ -71,9 +71,9 @@ void Engine::cleanup(){
 
         vkDestroyFence(device, frameData[i].renderFence, nullptr);
         vkDestroyFence(device, frameData[i].computeFence, nullptr);
-        vkDestroySemaphore(device, frameData[i].renderSemaphore, nullptr);
-        vkDestroySemaphore(device, frameData[i].swapchainSemaphore, nullptr);
+        vkDestroySemaphore(device, frameData[i].acquireSemaphore, nullptr);
     }
+
     
     vkDestroyCommandPool(device, immTransfer.pool, nullptr);
     vkDestroyFence(device, immTransfer.fence, nullptr);
@@ -133,6 +133,9 @@ void Engine::cleanup(){
 
     vmaDestroyAllocator(vmaAllocator);
 
+    for(size_t i = 0; i < swapchain->presentComplete.size(); i++){
+        vkDestroySemaphore(device, swapchain->presentComplete.at(i), nullptr);
+    }
     swapchain->destroySwapchain();
 
 	vkDestroySurfaceKHR(instance, surface, nullptr);
@@ -408,8 +411,7 @@ void Engine::initSynchronization(){
 		vkCreateFence(device, &fenceInfo, nullptr, &frameData[i].renderFence);
 		vkCreateFence(device, &fenceInfo, nullptr, &frameData[i].computeFence);
 
-		vkCreateSemaphore(device, &semInfo, nullptr, &frameData[i].swapchainSemaphore);
-		vkCreateSemaphore(device, &semInfo, nullptr, &frameData[i].renderSemaphore);
+		vkCreateSemaphore(device, &semInfo, nullptr, &frameData[i].acquireSemaphore);
 	}
 
     vkCreateFence(device, &fenceInfo, nullptr, &immTransfer.fence);
@@ -1864,7 +1866,7 @@ void Engine::draw(){
         throw std::runtime_error("Fence wait failed!");
     }    
 	uint32_t index;
-	VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain->swapchain, 1000000000, getCurrentFrame().swapchainSemaphore, VK_NULL_HANDLE, &index);
+	VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain->swapchain, 1000000000, getCurrentFrame().acquireSemaphore, VK_NULL_HANDLE, &index);
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
         int32_t w = 0;
         int32_t h = 0;
@@ -1921,7 +1923,7 @@ void Engine::draw(){
         VkSemaphoreSubmitInfo { 
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
             .pNext = nullptr,
-            .semaphore = getCurrentFrame().swapchainSemaphore,
+            .semaphore = getCurrentFrame().acquireSemaphore,
             .value = 1,
             .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
             .deviceIndex = 0
@@ -1944,7 +1946,7 @@ void Engine::draw(){
 	VkSemaphoreSubmitInfo semaphoreSignalSubmitInfo{ 
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
         .pNext = nullptr,
-        .semaphore = getCurrentFrame().renderSemaphore,
+        .semaphore = swapchain->presentComplete.at(index),
         .value = 1,
         .stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
         .deviceIndex = 0
@@ -1970,7 +1972,7 @@ void Engine::draw(){
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .pNext = nullptr,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &getCurrentFrame().renderSemaphore,
+        .pWaitSemaphores = &getCurrentFrame().acquireSemaphore,
         .swapchainCount = 1,
         .pSwapchains = &swapchain->swapchain,
         .pImageIndices = &index

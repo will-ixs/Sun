@@ -21,8 +21,7 @@ struct FrameData{
 	VkCommandPool computeCommandPool;
     VkCommandBuffer computeCommandBuffer;
 
-    VkSemaphore swapchainSemaphore;
-    VkSemaphore renderSemaphore;
+    VkSemaphore acquireSemaphore;
     VkFence renderFence;
     VkFence computeFence;
 };

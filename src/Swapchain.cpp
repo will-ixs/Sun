@@ -11,7 +11,7 @@ Swapchain::~Swapchain()
 {
 }
 
-void Swapchain::createSwapchain(uint32_t width, uint32_t height){
+void Swapchain::createSwapchain(uint32_t width, uint32_t height, bool recreate){
     vkb::SwapchainBuilder swapchainBuilder{ m_physicalDevice, m_device, m_surface};
 
 	format = VK_FORMAT_B8G8R8A8_UNORM;
@@ -38,9 +38,19 @@ void Swapchain::createSwapchain(uint32_t width, uint32_t height){
 		.height = extent.height,
 		.depth = 1
 	};
-
+	VkSemaphoreCreateInfo semInfo = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = nullptr,
+    };
 	for(size_t i=0; i < swapchainImages.size(); i++){
 		images.emplace_back(Image(m_device, swapchainImages.at(i), swapchainImageViews.at(i), imageExtent, format, VK_IMAGE_ASPECT_COLOR_BIT, true));
+	}
+
+	if(!recreate){
+		presentComplete.resize(swapchainImages.size());
+		for(size_t i=0; i < swapchainImages.size(); i++){
+			vkCreateSemaphore(m_device, &semInfo, nullptr, &presentComplete.at(i));
+		}
 	}
 }
 
@@ -49,7 +59,7 @@ void Swapchain::resizeSwapchain(uint32_t width, uint32_t height){
 
     destroySwapchain();
     
-    createSwapchain(width, height);
+    createSwapchain(width, height, true);
 }
 
 void Swapchain::destroySwapchain(){
