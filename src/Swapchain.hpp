@@ -19,7 +19,7 @@ public:
     //Swapchain's resources
     VkSwapchainKHR swapchain;
     std::vector<Image> images;
-    std::vector<VkSemaphore> presentComplete;
+    std::vector<VkSemaphore> submitSemaphores;
     VkExtent2D extent;
     VkFormat format;
     

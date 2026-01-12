@@ -133,8 +133,8 @@ void Engine::cleanup(){
 
     vmaDestroyAllocator(vmaAllocator);
 
-    for(size_t i = 0; i < swapchain->presentComplete.size(); i++){
-        vkDestroySemaphore(device, swapchain->presentComplete.at(i), nullptr);
+    for(size_t i = 0; i < swapchain->submitSemaphores.size(); i++){
+        vkDestroySemaphore(device, swapchain->submitSemaphores.at(i), nullptr);
     }
     swapchain->destroySwapchain();
 
@@ -243,12 +243,16 @@ void Engine::initVulkan(){
         .timelineSemaphore = VK_TRUE,
         .bufferDeviceAddress = VK_TRUE,
     };
-
+	VkPhysicalDeviceVulkan11Features features11{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .shaderDrawParameters = VK_TRUE
+    };
     vkb::PhysicalDeviceSelector vkbSelector{ vkbInstance };
 	vkb::PhysicalDevice vkbPhysicalDevice = vkbSelector
 		.set_minimum_version(1, 3)
 		.set_required_features_13(features13)
 		.set_required_features_12(features12)
+        .set_required_features_11(features11)
 		.set_surface(surface)
 		.select()
 		.value();
@@ -1711,7 +1715,7 @@ void Engine::registerParticleSystem(std::string name, glm::vec3 defaultVelocity)
     VkShaderModule comp;
     std::string shaderFileName = "../../shaders/particle_compute/particle_" + name + ".slang";
 	if (loadShader(&comp, shaderFileName)) {
-        std::cout << "Succesfully built " << shaderFileName << " shader module." << std::endl;
+        std::cout << "Successfully built " << shaderFileName << " shader module." << std::endl;
     }
 
     VkPipelineShaderStageCreateInfo particleComputeStageInfo {
@@ -1946,7 +1950,7 @@ void Engine::draw(){
 	VkSemaphoreSubmitInfo semaphoreSignalSubmitInfo{ 
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
         .pNext = nullptr,
-        .semaphore = swapchain->presentComplete.at(index),
+        .semaphore = swapchain->submitSemaphores.at(index),
         .value = 1,
         .stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
         .deviceIndex = 0
@@ -1972,7 +1976,7 @@ void Engine::draw(){
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .pNext = nullptr,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &getCurrentFrame().acquireSemaphore,
+        .pWaitSemaphores = &swapchain->submitSemaphores.at(index),
         .swapchainCount = 1,
         .pSwapchains = &swapchain->swapchain,
         .pImageIndices = &index

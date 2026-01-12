@@ -47,9 +47,9 @@ void Swapchain::createSwapchain(uint32_t width, uint32_t height, bool recreate){
 	}
 
 	if(!recreate){
-		presentComplete.resize(swapchainImages.size());
+		submitSemaphores.resize(swapchainImages.size());
 		for(size_t i=0; i < swapchainImages.size(); i++){
-			vkCreateSemaphore(m_device, &semInfo, nullptr, &presentComplete.at(i));
+			vkCreateSemaphore(m_device, &semInfo, nullptr, &submitSemaphores.at(i));
 		}
 	}
 }
