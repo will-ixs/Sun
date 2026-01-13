@@ -52,6 +52,7 @@ struct ParticleComputePushConstants{
     VkDeviceAddress velocityBuffer;
     float deltaTime;
     float timeScale;
+    float time;
     uint32_t particleCount;
 };
 
@@ -75,6 +76,7 @@ struct ParticleSystem {
     uint64_t particleTLValue;
     uint64_t framesAlive;
     glm::vec3 originPos;
+    bool enabled;
 };
 
 struct Vertex {
@@ -171,6 +173,7 @@ struct GLTFScene{
 
     std::vector<std::shared_ptr<GLTFNode>> topNodes;
     std::vector<VkSampler> samplers;
+    bool enabled;
 };
 
 struct Renderable{

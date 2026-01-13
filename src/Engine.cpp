@@ -925,6 +925,8 @@ void Engine::updateGUI(){
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+
+        //Engine Stats
         if (ImGui::Begin("Stats")) {
             ImGui::Text("Initialization Time: %.4f ms", stats.initTime);
             ImGui::Text("Frame: %f ms", stats.frameTime);
@@ -936,9 +938,22 @@ void Engine::updateGUI(){
             ImGui::Text("Yaw: %f ", glm::degrees(cam->yaw));
             ImGui::Text("Pitch: %f ", glm::degrees(cam->pitch));
             ImGui::SliderFloat("timescale", &timeScale, 0.05f, 2.0f);
-		}
+
+            ImGui::Separator();
+
+            ImGui::Text("Active Elements");
+            ImGui::Text("Scenes");
+            for(auto& [name, scene] : loadedGLTFs){
+                ImGui::Checkbox(name.c_str(), &scene->enabled);
+            }
+            ImGui::Text("Particle Systems");
+            for(auto& ps: particleSystems){
+                ImGui::Checkbox(ps.type.c_str(), &ps.enabled);
+            }
+        }
 		ImGui::End();
 
+        //Particle Spawner
         if (particlePipelineMap.size() > 0){
             std::vector<std::string_view> particleNames;
             particleNames.reserve(particlePipelineMap.size());
@@ -971,6 +986,7 @@ void Engine::updateGUI(){
             }
         }
 		ImGui::End();
+
         ImGui::Render();
 }
 
@@ -1190,6 +1206,7 @@ bool Engine::loadGLTF(std::filesystem::path filePath){
     std::cout << "Loading GLTF: " << filePath << std::endl;
     
     std::shared_ptr<GLTFScene> scene = std::make_shared<GLTFScene>();
+    scene->enabled = true;
     std::vector<std::shared_ptr<MeshAsset>> meshes;
     std::vector<std::shared_ptr<GLTFNode>> nodes;
     std::vector<std::shared_ptr<Image>> images;
@@ -1751,7 +1768,8 @@ void Engine::createParticleSystem(std::string name, uint32_t particleCount, floa
         //semaphore
         .particleTLValue = 0,
         .framesAlive = 0,
-        .originPos = originPosition
+        .originPos = originPosition,
+        .enabled = true
     };
 
     if (particleVelocityMap.count(name) == 0){
@@ -2147,6 +2165,10 @@ void Engine::drawParticles(VkCommandBuffer cmd){
     pcs.camWorldPos = cam->getPos();
 
     for(const auto& ps: particleSystems){
+        if(!ps.enabled){
+            continue;
+        }
+
         pcs.velocityBuffer = ps.velocityBuffer;        
         if(ps.framesAlive % 2 == 0){
             pcs.positionBuffer = ps.positionBufferB;
@@ -2198,6 +2220,7 @@ void Engine::updateParticles(){
         ParticleComputePushConstants pcs;
         pcs.deltaTime = deltaTime;
         pcs.timeScale = 0.0005f * timeScale;
+        pcs.time = static_cast<float>(currTime);
 
         for(const auto& ps : particleSystems){
             pcs.particleCount = static_cast<uint32_t>(ps.particleCount);
@@ -2242,6 +2265,28 @@ void Engine::updateParticles(){
             }
         );
     }
+    VkMemoryBarrier2 memoryBarrier = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        .pNext = nullptr,
+        .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+        .srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+        .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT
+    };
+    
+    VkDependencyInfo dependencyInfo = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .pNext = nullptr,
+        .dependencyFlags = 0,
+        .memoryBarrierCount = 1,
+        .pMemoryBarriers = &memoryBarrier,
+        .bufferMemoryBarrierCount = 0,
+        .pBufferMemoryBarriers = nullptr,
+        .imageMemoryBarrierCount = 0,
+        .pImageMemoryBarriers = nullptr
+    };
+    
+    vkCmdPipelineBarrier2(cmd, &dependencyInfo);
 
     VkSubmitInfo2 queueSubmitInfo = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
@@ -2345,7 +2390,13 @@ void Engine::run(){
         opaqueRenderables.clear();
         transparentRenderables.clear();
         transparentRenderablesIndices.clear();
+
         for(auto& [name, scene] : loadedGLTFs){
+            if(!scene->enabled){
+                //skip disabled scenes here instead of in render loop, dont waste time doing frustum culling on them 
+                continue;
+            }
+
             for(auto& node : scene->topNodes){
                 createRenderablesFromNode(node);
             }
@@ -2365,7 +2416,7 @@ void Engine::run(){
         auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         deltaTime = elapsed.count() / 1000.0f;
         currentTime += deltaTime;
-        if(frameNumber% 1440){
+        if(frameNumber% 144){
             stats.frameTime = deltaTime;
         }
     }
